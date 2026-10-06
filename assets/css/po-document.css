@@ -1,0 +1,90 @@
+/* ── Printed purchase order (Dompdf, US Letter) ────────────────────────── */
+/* Dompdf supports CSS 2.1 tables well and flexbox not at all, so layout is table-based. */
+
+@page { margin: 0.55in 0.6in 0.7in; }
+
+body {
+  font-family: "DejaVu Serif", serif;
+  font-size: 10.5pt;
+  color: #111;
+  line-height: 1.35;
+}
+
+table { border-collapse: collapse; width: 100%; }
+th, td { vertical-align: top; padding: 0; }
+
+/* Header: logo left, title box right */
+.po-head-logo { width: 52%; }
+.po-head-logo img { width: 3.1in; }
+.po-buyer-name { font-size: 20pt; font-weight: bold; }
+.po-head-title { width: 48%; }
+
+.po-title {
+  border: 3px solid #444;
+  text-align: center;
+  font-size: 19pt;
+  font-weight: bold;
+  white-space: nowrap;
+  padding: 4pt 0;
+}
+
+.po-meta { margin-top: 0; }
+.po-meta th,
+.po-meta td {
+  border: 1px solid #555;
+  border-top: 0;
+  padding: 2pt 6pt;
+  font-weight: normal;
+}
+.po-meta th { width: 38%; text-align: center; }
+.po-meta td { text-align: right; }
+.po-meta .po-number { font-weight: bold; }
+
+/* Purchase From / Deliver To */
+.po-parties { margin-top: 18pt; }
+.po-party-label {
+  border: 1px solid #888;
+  font-style: italic;
+  font-weight: normal;
+  text-align: left;
+  padding: 3pt 6pt;
+  width: 50%;
+}
+.po-party { padding: 10pt 6pt 0; }
+.po-party-name { font-weight: bold; font-size: 11.5pt; }
+
+.po-instructions {
+  margin: 16pt 0 0 1.6in;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+/* Line items */
+.po-items { margin-top: 18pt; }
+.po-items thead th {
+  font-weight: bold;
+  text-align: left;
+  border-bottom: 1.5px solid #111;
+  padding: 3pt 4pt;
+}
+.po-items tbody td {
+  padding: 4pt 4pt;
+  border-bottom: 0.5px solid #ccc;
+}
+.po-items tbody tr:last-child td { border-bottom: 1.5px solid #111; }
+.po-col-item { width: 17%; }
+.po-col-qty { width: 7%; text-align: right; }
+.po-items thead .po-col-qty { text-align: right; }
+.po-col-money { width: 13%; text-align: right; white-space: nowrap; }
+.po-items thead .po-col-money { text-align: right; }
+
+/* Totals */
+.po-totals { width: 45%; margin: 10pt 0 0 55%; }
+.po-totals th { text-align: right; padding: 1pt 12pt 1pt 0; font-weight: bold; }
+.po-totals td { text-align: right; width: 38%; padding: 1pt 4pt 1pt 0; font-weight: bold; }
+.po-totals .po-total th,
+.po-totals .po-total td { border-top: 1px solid #111; padding-top: 3pt; font-size: 12pt; }
+
+.po-footer { margin-top: 28pt; font-size: 8.5pt; color: #444; }
+.po-footer p { margin: 0 0 4pt; }
+.po-buyer { border-top: 0.5px solid #bbb; padding-top: 4pt; }

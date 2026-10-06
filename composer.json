@@ -1,0 +1,7 @@
+{
+  "name": "mannmade/mmi-po",
+  "description": "MMI Purchase Orders vendored dependencies",
+  "license": "GPL-2.0-or-later",
+  "require": { "php": ">=7.4", "dompdf/dompdf": "^3.1" },
+  "config": { "optimize-autoloader": true, "platform-check": false }
+}

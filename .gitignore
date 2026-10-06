@@ -1,0 +1,26 @@
+# Dependencies
+# vendor/ is committed on purpose: dompdf runs from it and the server has no build step.
+node_modules/
+
+# Logs, dumps, local data — never commit
+logs/
+*.log
+*.sql
+*.sql.gz
+*.zip
+*.tar.gz
+*.bak
+*.csv
+.env
+.env.*
+*.json.bak
+data/
+exports/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
