@@ -132,7 +132,7 @@ $mmi_po_s = MMI_PO_Settings::all();
 			<div class="mmi-po-grid">
 				<div class="mmi-po-field">
 					<label for="mmi-po-ss-key"><?php esc_html_e( 'API key', 'mmi-po' ); ?></label>
-					<input type="text" id="mmi-po-ss-key" name="ss_api_key" autocomplete="off" placeholder="<?php echo esc_attr( $mmi_po_ss['api_key'] !== '' ? __( 'Saved — leave blank to keep', 'mmi-po' ) : '' ); ?>">
+					<input type="text" id="mmi-po-ss-key" name="ss_api_key" autocomplete="off" placeholder="<?php echo esc_attr( $mmi_po_ss['api_key'] !== '' ? __( 'Saved (encrypted) — leave blank to keep', 'mmi-po' ) : '' ); ?>">
 				</div>
 				<div class="mmi-po-field">
 					<label for="mmi-po-ss-secret"><?php esc_html_e( 'API secret', 'mmi-po' ); ?></label>

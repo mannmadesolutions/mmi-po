@@ -31,8 +31,16 @@ class MMI_PO_ShipStation {
 	const KEY_LIFETIME = '+12 months';
 	const EXPIRY_WARN_DAYS = 30;
 
+	/**
+	 * api_key and api_secret are stored encrypted by MMI_Settings (MMI_Credentials) and read
+	 * back as plaintext. A secret still in mmi-po's own pre-1.4.5 format is moved over once.
+	 */
 	public static function settings(): array {
 		$saved = MMI_Settings::get( self::SETTINGS_KEY, array() );
+		if ( is_array( $saved ) && MMI_PO_Crypto::is_legacy( (string) ( $saved['api_secret'] ?? '' ) ) ) {
+			$saved['api_secret'] = MMI_PO_Crypto::decrypt( (string) $saved['api_secret'] );
+			MMI_Settings::set( self::SETTINGS_KEY, $saved );
+		}
 		return array_merge(
 			array(
 				'api_key'    => '',
@@ -53,7 +61,7 @@ class MMI_PO_ShipStation {
 
 		$next = array(
 			'api_key'    => $key !== '' ? $key : $current['api_key'],
-			'api_secret' => $secret !== '' ? MMI_PO_Crypto::encrypt( $secret ) : $current['api_secret'],
+			'api_secret' => $secret !== '' ? $secret : $current['api_secret'],
 			'carriers'   => array_values( array_filter( array_map( 'sanitize_key', (array) ( $raw['ss_carriers'] ?? array() ) ) ) ),
 			'saved_on'   => $current['saved_on'],
 			'expires_on' => $current['expires_on'],
@@ -281,7 +289,7 @@ class MMI_PO_ShipStation {
 	 */
 	private static function request( string $method, string $path, ?array $body = null, int $attempt = 0 ) {
 		$s      = self::settings();
-		$secret = MMI_PO_Crypto::decrypt( (string) $s['api_secret'] );
+		$secret = (string) $s['api_secret'];
 		if ( $s['api_key'] === '' || $secret === '' ) {
 			return new WP_Error( 'mmi_po_ss_creds', __( 'Add your ShipStation API key and secret in Purchase Orders → Settings.', 'mmi-po' ) );
 		}

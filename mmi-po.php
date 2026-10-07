@@ -3,7 +3,7 @@
  * Plugin Name: MMI Purchase Orders
  * Plugin URI: https://mannmade.us/extensions/mmi-po
  * Description: Build supplier purchase orders from the WooCommerce catalog, keep a record of every PO and what was sent, export branded PDFs and email them to suppliers.
- * Version: 1.4.4
+ * Version: 1.4.5
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Author: MannMade Solutions
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'MMI_PO_VERSION', '1.4.4' );
+define( 'MMI_PO_VERSION', '1.4.5' );
 define( 'MMI_PO_FILE', __FILE__ );
 define( 'MMI_PO_PATH', plugin_dir_path( __FILE__ ) );
 define( 'MMI_PO_URL', plugin_dir_url( __FILE__ ) );

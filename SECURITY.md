@@ -29,8 +29,10 @@ Sending a purchase order to a supplier always takes a human click per message; n
   that gets no clear answer blocks further purchases on that PO until someone checks ShipStation.
 - **Email** goes only through the site's own `wp_mail()` transport, with at most 10 recipients per
   message and 30 sends per user per hour.
-- **Credentials** are stored server-side, encrypted where the plugin holds API secrets, shown
-  masked, and never sent to the browser.
+- **Credentials.** The ShipStation API key and secret are stored encrypted (libsodium secretbox,
+  key derived from `MMI_CREDENTIALS_KEY` in wp-config when defined, else the site's
+  `SECURE_AUTH` salts), shown only as "saved", and never sent to the browser. Changing those
+  salts makes stored credentials unreadable; they then have to be re-entered.
 - **Audit log.** Settings and credential changes, PO emails, label purchases and voids, PDF
   downloads, PO deletions and refused requests are written to the suite's append-only, hash-chained
   `{prefix}mmi_audit_log` table, reviewed under **MannMade → Audit Log**. Secret values are
