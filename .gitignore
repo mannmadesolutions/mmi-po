@@ -1,5 +1,10 @@
 # Dependencies
 # vendor/ is committed on purpose: dompdf runs from it and the server has no build step.
+# Its dev-only scripts and test configs are not: a vendored PHP script without an ABSPATH
+# guard can be run by anyone over the web.
+vendor/*/*/bin/
+vendor/*/*/tests/
+vendor/**/phpunit.xml*
 node_modules/
 
 # Logs, dumps, local data — never commit

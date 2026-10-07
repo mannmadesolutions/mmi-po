@@ -3,7 +3,7 @@
  * Plugin Name: MMI Purchase Orders
  * Plugin URI: https://mannmade.us/extensions/mmi-po
  * Description: Build supplier purchase orders from the WooCommerce catalog, keep a record of every PO and what was sent, export branded PDFs and email them to suppliers.
- * Version: 1.4.3
+ * Version: 1.4.4
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Author: MannMade Solutions
@@ -19,13 +19,36 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'MMI_PO_VERSION', '1.4.3' );
+define( 'MMI_PO_VERSION', '1.4.4' );
 define( 'MMI_PO_FILE', __FILE__ );
 define( 'MMI_PO_PATH', plugin_dir_path( __FILE__ ) );
 define( 'MMI_PO_URL', plugin_dir_url( __FILE__ ) );
 
 /* ── MMI Shared Library (ADR-0006) — must load before any MMI_* class use ── */
 require_once MMI_PO_PATH . 'includes/mmi-shared/bootstrap.php';
+
+/* ── Capability + audit helpers (one filterable capability, AGENTS.md) ── */
+if ( ! function_exists( 'mmi_po_capability' ) ) {
+	/**
+	 * 'operate' = day-to-day PO work (shop managers); 'manage' = settings and ShipStation credentials.
+	 */
+	function mmi_po_capability( string $context = 'operate' ): string {
+		$default = $context === 'manage' ? 'manage_options' : 'manage_woocommerce';
+		return (string) apply_filters( 'mmi_po_required_capability', $default, $context );
+	}
+}
+if ( ! function_exists( 'mmi_po_user_can' ) ) {
+	function mmi_po_user_can( string $context = 'operate' ): bool {
+		return current_user_can( mmi_po_capability( $context ) );
+	}
+}
+if ( ! function_exists( 'mmi_po_audit' ) ) {
+	function mmi_po_audit( string $action, array $args = array() ): void {
+		if ( class_exists( 'MMI_Audit_Log' ) ) {
+			MMI_Audit_Log::record( 'mmi-po', $action, $args );
+		}
+	}
+}
 
 require_once MMI_PO_PATH . 'includes/class-po-install.php';
 

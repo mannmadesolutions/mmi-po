@@ -158,7 +158,7 @@ class MMI_PO_Install {
 			$fields['company'] = $row['name'];
 			$fields['phone']   = $row['phone'];
 			$data              = array( 'address_fields' => wp_json_encode( $fields ) );
-			// The Music People (and KMC, below) refuse drop-shipper labels (user, 2026-09-28).
+			// The Music People (and KMC, below) refuse drop-shipper labels.
 			if ( $row['name'] === 'The Music People' ) {
 				$data['label_policy'] = 'supplier_only';
 			}

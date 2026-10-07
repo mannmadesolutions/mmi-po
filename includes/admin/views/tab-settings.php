@@ -30,7 +30,7 @@ $mmi_po_s = MMI_PO_Settings::all();
 					<input type="hidden" name="logo_id" id="mmi-po-logo-id" value="<?php echo esc_attr( (string) $mmi_po_s['logo_id'] ); ?>">
 					<button type="button" class="button" id="mmi-po-logo-pick"><?php esc_html_e( 'Choose logo…', 'mmi-po' ); ?></button>
 					<button type="button" class="button-link" id="mmi-po-logo-reset" data-default="<?php echo esc_url( MMI_PO_URL . 'assets/img/default-logo.png' ); ?>"><?php esc_html_e( 'Use bundled logo', 'mmi-po' ); ?></button>
-					<p class="mmi-hint-text"><?php esc_html_e( 'The bundled logo was cropped from a screenshot of the old Numbers template. A clean PNG from your brand files will print sharper.', 'mmi-po' ); ?></p>
+					<p class="mmi-hint-text"><?php esc_html_e( 'Upload a PNG from your brand files; at least 600 px wide prints sharply.', 'mmi-po' ); ?></p>
 				</div>
 				<div class="mmi-po-field">
 					<label for="mmi-po-buyer-name"><?php esc_html_e( 'Business name', 'mmi-po' ); ?></label>

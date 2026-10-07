@@ -42,7 +42,7 @@ $mmi_po_editing = $tab === 'edit' && ! empty( $_GET['po'] ); // phpcs:ignore Wor
 	<div class="wp-header-end"></div>
 
 	<nav class="nav-tab-wrapper">
-		<?php foreach ( MMI_PO_Admin::TABS as $key => $def ) : ?>
+		<?php foreach ( MMI_PO_Admin::visible_tabs() as $key => $def ) : ?>
 			<?php
 			$label = $def['label'];
 			if ( $key === 'edit' && $mmi_po_editing ) {

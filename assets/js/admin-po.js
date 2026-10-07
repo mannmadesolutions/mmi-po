@@ -98,6 +98,7 @@
         RB_CONFIRM_TEXT: '#mmi-po-rb-confirm-text',
         RB_BROWSE: '#mmi-po-rb-browse',
         LABEL_VOID: '.mmi-po-label-void',
+        LABEL_RESOLVE: '.mmi-po-label-resolve',
         ATTACH_LABEL: '#mmi-po-attach-label',
         ATTACH_LABEL_WRAP: '#mmi-po-attach-label-wrap',
         ATTACH_LABEL_TEXT: '#mmi-po-attach-label-text',
@@ -198,6 +199,8 @@
         confirmVoid: 'Void this label? ShipStation will request a postage refund where the carrier allows it.',
         labelBought: 'Label bought: %service%, tracking %tracking%.',
         labelVoided: 'Label voided.',
+        confirmResolve: 'Mark this purchase resolved? Only do this after checking ShipStation → Shipments for this PO and voiding any label it bought.',
+        labelResolved: 'Marked resolved. You can buy a label again.',
         attachLabel: 'Attach shipping label (%service%, tracking %tracking%)',
         ssConnected: 'Connected. %count% carrier(s) on the account. Tick the ones to quote, then Save settings.',
         ssNoCarriers: 'Connected, but no carriers are set up in ShipStation yet.',
@@ -247,13 +250,17 @@
     }
 
     /** POSTs to admin-ajax; resolves with `data`, rejects with a readable message. */
-    function ajax(action, data) {
+    /** onErrorData (optional) receives an error response's data, e.g. a refreshed order after a failed purchase. */
+    function ajax(action, data, onErrorData) {
         return new Promise((resolve, reject) => {
             $.post(CFG.ajaxUrl, Object.assign({ action: `mmi_po_${action}`, nonce: CFG.nonce }, data))
                 .done((res) => {
                     if (res && res.success) {
                         resolve(res.data);
                     } else {
+                        if (onErrorData && res && res.data) {
+                            onErrorData(res.data);
+                        }
                         reject((res && res.data && res.data.message) || MESSAGES.networkError);
                     }
                 })
@@ -477,7 +484,7 @@
             ` : '').prop('hidden', !active);
 
             const past = (this.order.labels || []).filter((l) => l.status !== 'active');
-            $(SELECTORS.LABEL_HISTORY).html(past.map((l) => `<li class="mmi-text-muted">${esc(l.created_at)} · ${esc(l.service_name)} · ${esc(l.tracking_number || '—')} · ${esc(money(l.cost))} · ${esc(l.status)}${l.is_test ? ' (test)' : ''}</li>`).join(''));
+            $(SELECTORS.LABEL_HISTORY).html(past.map((l) => `<li class="mmi-text-muted">${esc(l.created_at)} · ${esc(l.service_name)} · ${esc(l.tracking_number || '—')} · ${esc(money(l.cost))} · ${esc(l.status)}${l.is_test ? ' (test)' : ''}${l.status === 'pending' ? ` <button type="button" class="button button-small mmi-po-label-resolve" data-id="${l.id}">Resolved</button>` : ''}</li>`).join(''));
         },
 
         /* ── Rate Browser (modeled on ShipStation's) ─────────────────────── */
@@ -704,7 +711,13 @@
                     if (this.order.label_blocker) {
                         throw this.order.label_blocker;
                     }
-                    return ajax('buy_label', { id: this.order.id, carrier_code: rate.carrier_code, service_code: rate.service_code, service_name: `${rate.carrier_name} ${rate.service_name}` });
+                    return ajax('buy_label', {
+                        id: this.order.id,
+                        carrier_code: rate.carrier_code,
+                        service_code: rate.service_code,
+                        service_name: `${rate.carrier_name} ${rate.service_name}`,
+                        expected_cost: rate.cost,
+                    }, (err) => { if (err.refresh) { this.applyResponse(err.refresh); } });
                 })
                 .then((data) => {
                     window.MMIModal.close($(SELECTORS.RB));
@@ -717,6 +730,15 @@
                     this.rbStage('pick');
                     this.rbFooter();
                 });
+        },
+
+        resolveLabel(shipmentId) {
+            if (!window.confirm(MESSAGES.confirmResolve)) {
+                return;
+            }
+            ajax('resolve_label', { id: this.order.id, shipment_id: shipmentId })
+                .then((data) => { this.applyResponse(data); this.message(MESSAGES.labelResolved); })
+                .catch((msg) => this.message(msg, 'error'));
         },
 
         voidLabel(shipmentId) {
@@ -756,6 +778,7 @@
                 .on('click', SELECTORS.USE_WEIGHT, () => this.applyWeightGuess())
                 .on('click', SELECTORS.USE_BOX, () => this.applyBoxGuess());
             $(SELECTORS.LABEL_CURRENT).on('click', SELECTORS.LABEL_VOID, function () { self.voidLabel($(this).data('id')); });
+            $(SELECTORS.LABEL_HISTORY).on('click', SELECTORS.LABEL_RESOLVE, function () { self.resolveLabel($(this).data('id')); });
             $([SELECTORS.TAX, SELECTORS.SHIPPING].join(',')).on('input', () => { this.recalc(); this.markDirty(); });
 
             $(SELECTORS.LINES_BODY)

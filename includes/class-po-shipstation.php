@@ -5,8 +5,8 @@
  *
  * Money: listing carriers and getting rates are free. createlabel buys postage billed to the
  * ShipStation account, so it only runs from the Rate Browser's explicit, priced confirmation.
- * There is no test mode: ShipStation answers testLabel with "Test labels are not supported" for
- * this account's carriers (2026-09-28); a bought label can be voided for a refund instead.
+ * There is no test mode: ShipStation can answer testLabel with "Test labels are not supported",
+ * so a bought label is voided for a refund instead.
  *
  * @package MannMade\PurchaseOrders
  */
@@ -27,7 +27,7 @@ class MMI_PO_ShipStation {
 	const QUOTE_TTL     = 10 * MINUTE_IN_SECONDS;
 	const QUOTE_PREFIX  = 'mmi_po_ss_quote_';
 
-	/** ShipStation API keys are issued for 12 months (user, 2026-09-28). */
+	/** ShipStation API keys are issued for 12 months. */
 	const KEY_LIFETIME = '+12 months';
 	const EXPIRY_WARN_DAYS = 30;
 
@@ -147,8 +147,8 @@ class MMI_PO_ShipStation {
 		}
 		$carriers = array();
 		foreach ( (array) $res as $c ) {
-			// Accounts often give every carrier the same nickname (e.g. "MMS Stamps.com"), so the
-			// carrier's own name leads and a distinct nickname is only appended.
+			// Accounts often give every carrier the same nickname, so the carrier's own name leads
+			// and a distinct nickname is only appended.
 			$name     = (string) ( $c['name'] ?? $c['code'] ?? '' );
 			$nickname = trim( (string) ( $c['nickname'] ?? '' ) );
 			$carriers[] = array(
@@ -271,7 +271,14 @@ class MMI_PO_ShipStation {
 
 	/* ── HTTP ─────────────────────────────────────────────────────────────── */
 
-	/** @return array|WP_Error Decoded JSON body. */
+	/**
+	 * Error data carries 'uncertain' => true when the request may have been processed anyway: no
+	 * response, or a 5xx without ShipStation's own error message (a gateway error or crash). For
+	 * createlabel that means postage may have been bought. ShipStation also answers ordinary
+	 * refusals ("No applicable services…") with a 500 plus a message; those are definite.
+	 *
+	 * @return array|WP_Error Decoded JSON body.
+	 */
 	private static function request( string $method, string $path, ?array $body = null, int $attempt = 0 ) {
 		$s      = self::settings();
 		$secret = MMI_PO_Crypto::decrypt( (string) $s['api_secret'] );
@@ -298,7 +305,7 @@ class MMI_PO_ShipStation {
 
 		if ( is_wp_error( $response ) ) {
 			MMI_Logger::error( 'ShipStation request failed', array( 'path' => $path, 'error' => $response->get_error_message(), 'ms' => $ms ), 'integrations', 'MMI_PO_ShipStation' );
-			return new WP_Error( 'mmi_po_ss_http', __( 'Could not reach ShipStation: ', 'mmi-po' ) . $response->get_error_message() );
+			return new WP_Error( 'mmi_po_ss_http', __( 'Could not reach ShipStation: ', 'mmi-po' ) . $response->get_error_message(), array( 'uncertain' => true ) );
 		}
 
 		$code = (int) wp_remote_retrieve_response_code( $response );
@@ -323,7 +330,7 @@ class MMI_PO_ShipStation {
 		if ( $code < 200 || $code >= 300 ) {
 			$message = is_array( $data ) ? (string) ( $data['ExceptionMessage'] ?? $data['Message'] ?? $data['message'] ?? '' ) : '';
 			MMI_Logger::error( 'ShipStation API error', array( 'path' => $path, 'status' => $code, 'message' => $message, 'ms' => $ms ), 'integrations', 'MMI_PO_ShipStation' );
-			return new WP_Error( 'mmi_po_ss_' . $code, sprintf( 'ShipStation error %d%s', $code, $message !== '' ? ': ' . $message : '' ) );
+			return new WP_Error( 'mmi_po_ss_' . $code, sprintf( 'ShipStation error %d%s', $code, $message !== '' ? ': ' . $message : '' ), array( 'uncertain' => $code >= 500 && $message === '' ) );
 		}
 		MMI_Logger::debug( 'ShipStation request', array( 'path' => $path, 'status' => $code, 'ms' => $ms ), 'integrations', 'MMI_PO_ShipStation' );
 		return is_array( $data ) ? $data : array();

@@ -1,7 +1,7 @@
 <?php
 /**
- * Emails a PO to its supplier with the PDF attached. Uses the site's own wp_mail() transport
- * (WP Mail SMTP on mannmade.us) — no email provider of its own. Sending only ever happens from an
+ * Emails a PO to its supplier with the PDF attached. Uses the site's own wp_mail() transport —
+ * no email provider of its own. Sending only ever happens from an
  * explicit click in the Send dialog; nothing in this plugin emails a supplier automatically.
  *
  * @package MannMade\PurchaseOrders
@@ -14,6 +14,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 class MMI_PO_Mailer {
 
 	const MAX_RECIPIENTS = 10;
+
+	/** Per-user send cap: far above real PO volume, low enough that a misused account can't mass-mail. */
+	const MAX_SENDS_PER_HOUR = 30;
+	const SEND_COUNT_PREFIX  = 'mmi_po_sends_';
 
 	/** Prefilled Send dialog for a PO. */
 	public static function draft( array $order ): array {
@@ -63,6 +67,12 @@ class MMI_PO_Mailer {
 		if ( $subject === '' ) {
 			return new WP_Error( 'mmi_po_subject', __( 'Enter a subject.', 'mmi-po' ) );
 		}
+		$count_key = self::SEND_COUNT_PREFIX . get_current_user_id();
+		$sends     = (int) get_transient( $count_key );
+		if ( $sends >= self::MAX_SENDS_PER_HOUR ) {
+			mmi_po_audit( 'po.email', array( 'object_type' => 'purchase_order', 'object_id' => $po_id, 'outcome' => 'denied', 'details' => array( 'reason' => 'rate_limit' ) ) );
+			return new WP_Error( 'mmi_po_rate', sprintf( /* translators: %d: limit */ __( 'You have sent %d purchase order emails in the last hour. Wait a while before sending more.', 'mmi-po' ), self::MAX_SENDS_PER_HOUR ) );
+		}
 
 		$bytes = MMI_PO_Document::pdf( $order );
 		if ( is_wp_error( $bytes ) ) {
@@ -89,7 +99,9 @@ class MMI_PO_Mailer {
 		$settings = MMI_PO_Settings::all();
 		$headers  = array();
 		if ( is_email( $settings['reply_to'] ) ) {
-			$headers[] = 'Reply-To: ' . $settings['buyer_name'] . ' <' . $settings['reply_to'] . '>';
+			// wp_mail() splits address headers on commas, so the display name must not carry one.
+			$name      = trim( preg_replace( '/[,;<>"\x5c\r\n]+/', ' ', (string) $settings['buyer_name'] ) );
+			$headers[] = 'Reply-To: ' . ( $name !== '' ? '"' . $name . '" ' : '' ) . '<' . $settings['reply_to'] . '>';
 		}
 		foreach ( $cc_list as $address ) {
 			$headers[] = 'Cc: ' . $address;
@@ -106,17 +118,21 @@ class MMI_PO_Mailer {
 		add_action( 'wp_mail_failed', $capture );
 		$sent = wp_mail( $to_list, $subject, $body, $headers, $attachments );
 		remove_action( 'wp_mail_failed', $capture );
+		set_transient( $count_key, $sends + 1, HOUR_IN_SECONDS );
 		array_map( 'wp_delete_file', $attachments );
 
 		$file = basename( $stored );
 		$meta = array( 'to' => $to_list, 'cc' => $cc_list, 'subject' => $subject, 'file' => $file, 'label' => $label_path !== '' ? $label['tracking_number'] : '' );
 
+		$audit = array( 'object_type' => 'purchase_order', 'object_id' => $po_id, 'details' => array( 'to' => $to_list, 'cc' => $cc_list, 'label' => $label_path !== '' ) );
 		if ( ! $sent ) {
+			mmi_po_audit( 'po.email', array_merge( $audit, array( 'outcome' => 'failure' ) ) );
 			MMI_PO_Log::add( $po_id, 'email_failed', $failure !== '' ? $failure : 'wp_mail() returned false', $meta );
 			MMI_Logger::error( 'PO email failed', array( 'po_id' => $po_id, 'error' => $failure ), 'integrations', 'MMI_PO_Mailer' );
 			return new WP_Error( 'mmi_po_mail', sprintf( /* translators: %s: error */ __( 'The email was not sent: %s', 'mmi-po' ), $failure !== '' ? $failure : __( 'the mail transport reported a failure.', 'mmi-po' ) ) );
 		}
 
+		mmi_po_audit( 'po.email', $audit );
 		MMI_PO_Orders::mark_sent( $po_id, array_merge( $to_list, $cc_list ) );
 		MMI_PO_Log::add( $po_id, 'emailed', 'Sent to ' . implode( ', ', $to_list ) . ( $label_path !== '' ? ' with shipping label' : '' ), $meta );
 		return array( 'to' => $to_list, 'file' => $file );

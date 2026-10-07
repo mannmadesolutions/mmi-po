@@ -12,7 +12,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 class MMI_PO_Admin {
 
 	const PAGE_SLUG    = 'mmi-po';
-	const CAPABILITY   = 'manage_woocommerce';
 	const NONCE_ACTION = 'mmi_po_admin';
 	const PER_PAGE     = 50;
 	const MIN_SEARCH   = 2;
@@ -25,7 +24,10 @@ class MMI_PO_Admin {
 		'settings'  => array( 'label' => 'Settings', 'icon' => 'admin-settings' ),
 	);
 
-	const AJAX_ACTIONS = array( 'search_products', 'save', 'set_status', 'duplicate', 'delete', 'email_draft', 'send', 'save_supplier', 'load_wc_order', 'rate_carriers', 'rates', 'buy_label', 'void_label', 'ss_carriers' );
+	/** Tabs that need the 'manage' capability (settings and credentials) rather than 'operate'. */
+	const MANAGE_TABS = array( 'settings' );
+
+	const AJAX_ACTIONS = array( 'search_products', 'save', 'set_status', 'duplicate', 'delete', 'email_draft', 'send', 'save_supplier', 'load_wc_order', 'rate_carriers', 'rates', 'buy_label', 'void_label', 'resolve_label', 'ss_carriers' );
 
 	public static function init(): void {
 		add_action( 'admin_menu', array( __CLASS__, 'register_submenu' ) );
@@ -40,7 +42,7 @@ class MMI_PO_Admin {
 	}
 
 	public static function register_submenu(): void {
-		add_submenu_page( 'mmi-dashboard', __( 'Purchase Orders', 'mmi-po' ), __( 'Purchase Orders', 'mmi-po' ), self::CAPABILITY, self::PAGE_SLUG, array( __CLASS__, 'render_page' ) );
+		add_submenu_page( 'mmi-dashboard', __( 'Purchase Orders', 'mmi-po' ), __( 'Purchase Orders', 'mmi-po' ), mmi_po_capability(), self::PAGE_SLUG, array( __CLASS__, 'render_page' ) );
 	}
 
 	public static function url( array $args = array() ): string {
@@ -85,7 +87,6 @@ class MMI_PO_Admin {
 		wp_enqueue_style( 'mmi-po-admin', MMI_PO_URL . 'assets/css/admin-po.css', array( 'mmi-suite-common' ), MMI_PO_VERSION );
 		if ( $tab === 'settings' ) {
 			wp_enqueue_media();
-			$config['shipstationConfigured'] = MMI_PO_ShipStation::is_configured();
 		}
 		wp_enqueue_script( 'mmi-po-admin', MMI_PO_URL . 'assets/js/admin-po.js', array( 'jquery', 'jquery-ui-sortable', 'mmi-modal', 'mmi-escape-html', 'mmi-table-manager' ), MMI_PO_VERSION, true );
 
@@ -129,7 +130,7 @@ class MMI_PO_Admin {
 	}
 
 	public static function render_page(): void {
-		if ( ! current_user_can( self::CAPABILITY ) ) {
+		if ( ! mmi_po_user_can() ) {
 			return;
 		}
 		$tab = self::current_tab();
@@ -138,7 +139,15 @@ class MMI_PO_Admin {
 
 	public static function current_tab(): string {
 		$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'orders'; // phpcs:ignore WordPress.Security.NonceVerification -- navigation only.
-		return isset( self::TABS[ $tab ] ) ? $tab : 'orders';
+		return isset( self::visible_tabs()[ $tab ] ) ? $tab : 'orders';
+	}
+
+	/** The tabs this user may open: Settings only for the 'manage' capability. */
+	public static function visible_tabs(): array {
+		$can_manage = mmi_po_user_can( 'manage' );
+		return array_filter( self::TABS, static function ( $key ) use ( $can_manage ) {
+			return $can_manage || ! in_array( $key, self::MANAGE_TABS, true );
+		}, ARRAY_FILTER_USE_KEY );
 	}
 
 	/* ── AJAX ─────────────────────────────────────────────────────────────── */
@@ -181,10 +190,12 @@ class MMI_PO_Admin {
 
 	public static function ajax_delete(): void {
 		self::guard();
-		$result = MMI_PO_Orders::delete( absint( $_POST['id'] ?? 0 ) );
+		$id     = absint( $_POST['id'] ?? 0 );
+		$result = MMI_PO_Orders::delete( $id );
 		if ( is_wp_error( $result ) ) {
 			wp_send_json_error( array( 'message' => $result->get_error_message() ), 400 );
 		}
+		mmi_po_audit( 'po.delete', array( 'object_type' => 'purchase_order', 'object_id' => $id ) );
 		wp_send_json_success( array( 'redirect' => self::url() ) );
 	}
 
@@ -279,7 +290,10 @@ class MMI_PO_Admin {
 		wp_send_json_success( array( 'rates' => $rates, 'error' => '' ) );
 	}
 
-	/** Buys postage (unless ShipStation test mode is on). Only reachable from the confirm dialog. */
+	/**
+	 * Buys real postage. Only reachable from the Rate Browser's priced confirm; expected_cost is
+	 * the price the user confirmed, and the purchase is refused if ShipStation now quotes more.
+	 */
 	public static function ajax_buy_label(): void {
 		self::guard();
 		$id     = absint( $_POST['id'] ?? 0 );
@@ -287,9 +301,14 @@ class MMI_PO_Admin {
 			$id,
 			sanitize_key( wp_unslash( $_POST['carrier_code'] ?? '' ) ),
 			sanitize_text_field( wp_unslash( $_POST['service_code'] ?? '' ) ),
-			sanitize_text_field( wp_unslash( $_POST['service_name'] ?? '' ) )
+			sanitize_text_field( wp_unslash( $_POST['service_name'] ?? '' ) ),
+			(float) wp_unslash( $_POST['expected_cost'] ?? 0 )
 		);
-		self::respond_order( is_wp_error( $result ) ? $result : $id );
+		if ( is_wp_error( $result ) ) {
+			// The PO's label state may have changed (a 'pending' purchase), so send it back with the error.
+			wp_send_json_error( array( 'message' => $result->get_error_message(), 'refresh' => MMI_PO_Orders::get( $id ) ? self::order_payload( $id ) : null ), 400 );
+		}
+		self::respond_order( $id );
 	}
 
 	public static function ajax_void_label(): void {
@@ -298,9 +317,16 @@ class MMI_PO_Admin {
 		self::respond_order( is_wp_error( $result ) ? $result : absint( $_POST['id'] ?? 0 ) );
 	}
 
+	/** Clears a label purchase whose outcome was unknown, once the user has checked ShipStation. */
+	public static function ajax_resolve_label(): void {
+		self::guard();
+		$result = MMI_PO_Shipping::resolve_pending( absint( $_POST['shipment_id'] ?? 0 ) );
+		self::respond_order( is_wp_error( $result ) ? $result : absint( $_POST['id'] ?? 0 ) );
+	}
+
 	/** Settings → Test connection: lists the account's carriers (also refreshes the cache). */
 	public static function ajax_ss_carriers(): void {
-		self::guard();
+		self::guard( 'manage' );
 		$carriers = MMI_PO_ShipStation::carriers( true );
 		if ( is_wp_error( $carriers ) ) {
 			wp_send_json_error( array( 'message' => $carriers->get_error_message() ), 400 );
@@ -311,22 +337,36 @@ class MMI_PO_Admin {
 	/* ── admin-post handlers ──────────────────────────────────────────────── */
 
 	public static function save_settings(): void {
-		if ( ! current_user_can( self::CAPABILITY ) ) {
-			wp_die( esc_html__( 'Insufficient permissions.', 'mmi-po' ) );
-		}
+		self::require_cap( 'manage', 'settings.update' );
 		check_admin_referer( self::NONCE_ACTION );
 		$raw = wp_unslash( $_POST ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- sanitized per field in MMI_PO_Settings::save().
-		MMI_PO_Settings::save( is_array( $raw ) ? $raw : array() );
-		MMI_PO_ShipStation::save_settings( is_array( $raw ) ? $raw : array() );
+		$raw = is_array( $raw ) ? $raw : array();
+
+		$settings_before = MMI_PO_Settings::all();
+		$ss_before       = MMI_PO_ShipStation::settings();
+		MMI_PO_Settings::save( $raw );
+		MMI_PO_ShipStation::save_settings( $raw );
+		$ss_after = MMI_PO_ShipStation::settings();
+
+		if ( class_exists( 'MMI_Audit_Log' ) ) {
+			$changed = MMI_Audit_Log::changed_keys( $settings_before, MMI_PO_Settings::all() );
+			if ( $changed ) {
+				mmi_po_audit( 'settings.update', array( 'details' => array( 'keys' => $changed ) ) );
+			}
+			$ss_changed = MMI_Audit_Log::changed_keys( $ss_before, $ss_after );
+			if ( array_intersect( $ss_changed, array( 'api_key', 'api_secret' ) ) ) {
+				mmi_po_audit( 'credentials.update', array( 'object_type' => 'shipstation', 'details' => array( 'keys' => $ss_changed, 'cleared' => $ss_after['api_key'] === '' ) ) );
+			} elseif ( $ss_changed ) {
+				mmi_po_audit( 'settings.update', array( 'object_type' => 'shipstation', 'details' => array( 'keys' => $ss_changed ) ) );
+			}
+		}
 		wp_safe_redirect( self::url( array( 'tab' => 'settings', 'saved' => 1 ) ) );
 		exit;
 	}
 
 	/** Renders a PO's PDF on the fly: inline for Preview, attachment for Download. */
 	public static function serve_pdf(): void {
-		if ( ! current_user_can( self::CAPABILITY ) ) {
-			wp_die( esc_html__( 'Insufficient permissions.', 'mmi-po' ) );
-		}
+		self::require_cap( 'operate', 'export.download' );
 		check_admin_referer( self::NONCE_ACTION );
 		$order = MMI_PO_Orders::get( absint( $_GET['po'] ?? 0 ) );
 		if ( ! $order ) {
@@ -339,21 +379,21 @@ class MMI_PO_Admin {
 		$download = ! empty( $_GET['download'] );
 		if ( $download ) {
 			MMI_PO_Log::add( (int) $order['id'], 'pdf_exported', 'PDF downloaded' );
+			mmi_po_audit( 'export.download', array( 'object_type' => 'purchase_order', 'object_id' => (int) $order['id'] ) );
 		}
 		self::send_pdf( $bytes, MMI_PO_Document::filename( $order ), $download );
 	}
 
 	/** Serves an archived copy of a PDF exactly as it was emailed. */
 	public static function serve_stored_file(): void {
-		if ( ! current_user_can( self::CAPABILITY ) ) {
-			wp_die( esc_html__( 'Insufficient permissions.', 'mmi-po' ) );
-		}
+		self::require_cap( 'operate', 'export.download' );
 		check_admin_referer( self::NONCE_ACTION );
 		$name = sanitize_file_name( wp_unslash( $_GET['file'] ?? '' ) );
 		$path = MMI_PO_Document::stored_path( $name );
 		if ( $path === '' ) {
 			wp_die( esc_html__( 'That file is no longer available.', 'mmi-po' ) );
 		}
+		mmi_po_audit( 'export.download', array( 'object_type' => 'stored_file', 'object_id' => $name ) );
 		self::send_pdf( (string) file_get_contents( $path ), $name, false );
 	}
 
@@ -369,10 +409,23 @@ class MMI_PO_Admin {
 		exit;
 	}
 
-	private static function guard(): void {
+	private static function guard( string $context = 'operate' ): void {
 		check_ajax_referer( self::NONCE_ACTION, 'nonce' );
-		if ( ! current_user_can( self::CAPABILITY ) ) {
+		if ( ! mmi_po_user_can( $context ) ) {
+			if ( class_exists( 'MMI_Audit_Log' ) ) {
+				MMI_Audit_Log::denied( 'mmi-po', 'ajax.' . sanitize_key( wp_unslash( $_REQUEST['action'] ?? '' ) ) );
+			}
 			wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'mmi-po' ) ), 403 );
+		}
+	}
+
+	/** admin-post handlers: refuse (and record the refusal) without the capability. */
+	private static function require_cap( string $context, string $action ): void {
+		if ( ! mmi_po_user_can( $context ) ) {
+			if ( class_exists( 'MMI_Audit_Log' ) ) {
+				MMI_Audit_Log::denied( 'mmi-po', $action );
+			}
+			wp_die( esc_html__( 'Insufficient permissions.', 'mmi-po' ), '', array( 'response' => 403 ) );
 		}
 	}
 
@@ -381,14 +434,15 @@ class MMI_PO_Admin {
 		if ( is_wp_error( $id ) ) {
 			wp_send_json_error( array( 'message' => $id->get_error_message() ), 400 );
 		}
-		$order = MMI_PO_Orders::get( (int) $id );
-		wp_send_json_success(
-			array(
-				'order'       => self::order_for_js( $order ),
-				'editUrl'     => self::url( array( 'tab' => 'edit', 'po' => (int) $id ) ),
-				'pdfUrl'      => self::pdf_url( (int) $id, false ),
-				'downloadUrl' => self::pdf_url( (int) $id, true ),
-			)
+		wp_send_json_success( self::order_payload( (int) $id ) );
+	}
+
+	private static function order_payload( int $id ): array {
+		return array(
+			'order'       => self::order_for_js( MMI_PO_Orders::get( $id ) ),
+			'editUrl'     => self::url( array( 'tab' => 'edit', 'po' => $id ) ),
+			'pdfUrl'      => self::pdf_url( $id, false ),
+			'downloadUrl' => self::pdf_url( $id, true ),
 		);
 	}
 

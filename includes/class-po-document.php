@@ -39,7 +39,8 @@ class MMI_PO_Document {
 			$options->set( 'isRemoteEnabled', false );
 			$options->set( 'isPhpEnabled', false );
 			$options->set( 'isJavascriptEnabled', false );
-			$options->set( 'chroot', MMI_PO_PATH );
+			// The logo is inlined as a data URI, so Dompdf needs no local file access beyond assets/.
+			$options->set( 'chroot', MMI_PO_PATH . 'assets' );
 			$options->set( 'fontCache', self::dir( 'font-cache' ) );
 			$options->set( 'tempDir', get_temp_dir() );
 			$options->set( 'defaultFont', 'DejaVu Serif' );
@@ -66,7 +67,15 @@ class MMI_PO_Document {
 	 * @return string|WP_Error Absolute path.
 	 */
 	public static function store( array $order, string $bytes ) {
-		return self::store_file( sanitize_file_name( $order['po_number'] . '-' . gmdate( 'Ymd-His' ) . '.pdf' ), $bytes );
+		return self::store_file( self::stored_name( $order['po_number'] ), $bytes );
+	}
+
+	/**
+	 * Archive file name: readable prefix plus a 128-bit random token, so a file cannot be found
+	 * by guessing PO numbers and dates even where the private folder's name leaks.
+	 */
+	public static function stored_name( string $prefix ): string {
+		return sanitize_file_name( $prefix . '-' . gmdate( 'Ymd-His' ) . '-' . bin2hex( random_bytes( 16 ) ) . '.pdf' );
 	}
 
 	/**
@@ -103,6 +112,9 @@ class MMI_PO_Document {
 		$dir = $base . $sub . '/';
 		if ( ! is_dir( $dir ) ) {
 			wp_mkdir_p( $dir );
+		}
+		if ( function_exists( 'mmi_shared_lib_guard_dir' ) ) {
+			mmi_shared_lib_guard_dir( $dir );
 		}
 		return $dir;
 	}
