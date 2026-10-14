@@ -1,7 +1,8 @@
 <?php
 /**
- * ShipStation API v1 client (https://www.shipstation.com/docs/api/). Only what mmi-po needs:
- * list carriers, get rates, create and void labels.
+ * ShipStation API v1 client (https://www.shipstation.com/docs/api/). What mmi-po needs (list
+ * carriers, get rates, create and void labels), plus two read-only lists other plugins use with
+ * the same credentials: stores() and shipments() (mmi-reverb-integration's ShipStation tracking).
  *
  * Money: listing carriers and getting rates are free. createlabel buys postage billed to the
  * ShipStation account, so it only runs from the Rate Browser's explicit, priced confirmation.
@@ -23,6 +24,10 @@ class MMI_PO_ShipStation {
 	const TIMEOUT       = 30;
 	const CARRIER_CACHE = 'mmi_po_ss_carriers';
 	const CARRIER_TTL   = 12 * HOUR_IN_SECONDS;
+	const STORE_CACHE   = 'mmi_po_ss_stores';
+	const STORE_TTL     = 12 * HOUR_IN_SECONDS;
+	/** ShipStation API v1 reports and filters every date in Pacific time, with no offset. */
+	const API_TIMEZONE  = 'America/Los_Angeles';
 	const MAX_RETRIES   = 1;
 	const QUOTE_TTL     = 10 * MINUTE_IN_SECONDS;
 	const QUOTE_PREFIX  = 'mmi_po_ss_quote_';
@@ -263,6 +268,100 @@ class MMI_PO_ShipStation {
 			return new WP_Error( 'mmi_po_ss_label', __( 'ShipStation did not return a label.', 'mmi-po' ) );
 		}
 		return $res;
+	}
+
+	/**
+	 * Stores connected to the ShipStation account, cached 12 h. Read-only.
+	 *
+	 * @return array|WP_Error List of {id, name, marketplace, active}.
+	 */
+	public static function stores( bool $refresh = false ) {
+		$cached = $refresh ? false : get_transient( self::STORE_CACHE );
+		if ( is_array( $cached ) ) {
+			return $cached;
+		}
+		$res = self::request( 'GET', '/stores?showInactive=false' );
+		if ( is_wp_error( $res ) ) {
+			return $res;
+		}
+		$stores = array();
+		foreach ( (array) $res as $st ) {
+			$stores[] = array(
+				'id'          => (int) ( $st['storeId'] ?? 0 ),
+				'name'        => (string) ( $st['storeName'] ?? '' ),
+				'marketplace' => (string) ( $st['marketplaceName'] ?? '' ),
+				'active'      => ! empty( $st['active'] ),
+			);
+		}
+		set_transient( self::STORE_CACHE, $stores, self::STORE_TTL );
+		return $stores;
+	}
+
+	/**
+	 * One page of shipments (labels), newest first. Read-only; no charge.
+	 *
+	 * @param array $args created_after (Unix time), store_id, order_number, page (from 1), per_page (max 500).
+	 * @return array|WP_Error {shipments: list, page: int, pages: int, total: int}. Each shipment:
+	 *         shipment_id, order_number, store_id, carrier_code, service_code, tracking_number,
+	 *         created_at (UTC 'Y-m-d H:i:s'), ship_date, voided, marketplace_notified, notify_error.
+	 */
+	public static function shipments( array $args = array() ) {
+		$query = array(
+			'sortBy'   => 'CreateDate',
+			'sortDir'  => 'DESC',
+			'page'     => max( 1, (int) ( $args['page'] ?? 1 ) ),
+			'pageSize' => min( 500, max( 1, (int) ( $args['per_page'] ?? 100 ) ) ),
+		);
+		if ( ! empty( $args['created_after'] ) ) {
+			$query['createDateStart'] = wp_date( 'Y-m-d H:i:s', (int) $args['created_after'], new DateTimeZone( self::API_TIMEZONE ) );
+		}
+		if ( ! empty( $args['store_id'] ) ) {
+			$query['storeId'] = (int) $args['store_id'];
+		}
+		if ( isset( $args['order_number'] ) && (string) $args['order_number'] !== '' ) {
+			$query['orderNumber'] = (string) $args['order_number'];
+		}
+
+		$res = self::request( 'GET', '/shipments?' . http_build_query( $query ) );
+		if ( is_wp_error( $res ) ) {
+			return $res;
+		}
+
+		$shipments = array();
+		foreach ( (array) ( $res['shipments'] ?? array() ) as $sh ) {
+			$shipments[] = array(
+				'shipment_id'          => (int) ( $sh['shipmentId'] ?? 0 ),
+				'order_number'         => (string) ( $sh['orderNumber'] ?? '' ),
+				'store_id'             => (int) ( $sh['advancedOptions']['storeId'] ?? 0 ),
+				'carrier_code'         => (string) ( $sh['carrierCode'] ?? '' ),
+				'service_code'         => (string) ( $sh['serviceCode'] ?? '' ),
+				'tracking_number'      => trim( (string) ( $sh['trackingNumber'] ?? '' ) ),
+				'created_at'           => self::api_time_to_utc( (string) ( $sh['createDate'] ?? '' ) ),
+				'ship_date'            => (string) ( $sh['shipDate'] ?? '' ),
+				'voided'               => ! empty( $sh['voided'] ),
+				'marketplace_notified' => ! empty( $sh['marketplaceNotified'] ),
+				'notify_error'         => trim( (string) ( $sh['notifyErrorMessage'] ?? '' ) ),
+			);
+		}
+		return array(
+			'shipments' => $shipments,
+			'page'      => (int) ( $res['page'] ?? $query['page'] ),
+			'pages'     => (int) ( $res['pages'] ?? 1 ),
+			'total'     => (int) ( $res['total'] ?? count( $shipments ) ),
+		);
+	}
+
+	/** "2026-10-14T06:53:30.7830000" (Pacific) → "2026-10-14 13:53:30" (UTC); '' when unreadable. */
+	private static function api_time_to_utc( string $value ): string {
+		if ( $value === '' ) {
+			return '';
+		}
+		try {
+			$dt = new DateTimeImmutable( substr( $value, 0, 19 ), new DateTimeZone( self::API_TIMEZONE ) );
+		} catch ( Exception $e ) {
+			return '';
+		}
+		return $dt->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' );
 	}
 
 	/** @return true|WP_Error */
