@@ -303,7 +303,8 @@ class MMI_PO_ShipStation {
 	 * @param array $args created_after (Unix time), store_id, order_number, page (from 1), per_page (max 500).
 	 * @return array|WP_Error {shipments: list, page: int, pages: int, total: int}. Each shipment:
 	 *         shipment_id, order_number, store_id, carrier_code, service_code, tracking_number,
-	 *         created_at (UTC 'Y-m-d H:i:s'), ship_date, voided, marketplace_notified, notify_error.
+	 *         created_at (UTC 'Y-m-d H:i:s'), ship_date, voided, marketplace_notified, notify_error,
+	 *         cost and insurance_cost (USD, what the label was bought for).
 	 */
 	public static function shipments( array $args = array() ) {
 		$query = array(
@@ -341,6 +342,8 @@ class MMI_PO_ShipStation {
 				'voided'               => ! empty( $sh['voided'] ),
 				'marketplace_notified' => ! empty( $sh['marketplaceNotified'] ),
 				'notify_error'         => trim( (string) ( $sh['notifyErrorMessage'] ?? '' ) ),
+				'cost'                 => (float) ( $sh['shipmentCost'] ?? 0 ),
+				'insurance_cost'       => (float) ( $sh['insuranceCost'] ?? 0 ),
 			);
 		}
 		return array(
