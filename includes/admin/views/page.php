@@ -38,6 +38,7 @@ $mmi_po_editing = $tab === 'edit' && ! empty( $_GET['po'] ); // phpcs:ignore Wor
 	<div class="mmi-header">
 		<h1><span class="dashicons dashicons-clipboard"></span> <?php esc_html_e( 'Purchase Orders', 'mmi-po' ); ?></h1>
 		<p class="mmi-header-description"><?php esc_html_e( 'Search the catalog, build a purchase order for a supplier, then preview, download or email the PDF. Every PO, export and email is kept on record.', 'mmi-po' ); ?></p>
+		<?php if ( class_exists( 'MMI_Feature_Gate' ) ) { MMI_Feature_Gate::render_works_with( 'mmi-po' ); } ?>
 	</div>
 	<div class="wp-header-end"></div>
 

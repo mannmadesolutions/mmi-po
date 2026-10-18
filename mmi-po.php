@@ -3,7 +3,7 @@
  * Plugin Name: MMI Purchase Orders
  * Plugin URI: https://mannmade.us/extensions/mmi-po
  * Description: Build supplier purchase orders from the WooCommerce catalog, keep a record of every PO and what was sent, export branded PDFs and email them to suppliers.
- * Version: 1.4.7
+ * Version: 1.4.8
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Author: MannMade Solutions
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'MMI_PO_VERSION', '1.4.7' );
+define( 'MMI_PO_VERSION', '1.4.8' );
 define( 'MMI_PO_FILE', __FILE__ );
 define( 'MMI_PO_PATH', plugin_dir_path( __FILE__ ) );
 define( 'MMI_PO_URL', plugin_dir_url( __FILE__ ) );
@@ -81,14 +81,7 @@ add_action( 'plugins_loaded', static function () {
 	MMI_PO_Install::maybe_upgrade();
 
 	// Other plugins use the ShipStation connection set up here (mmi-reverb-integration sends
-	// ShipStation tracking to Reverb), and show this gate when mmi-po is missing.
-	MMI_Feature_Gate::register( 'mmi-po', array(
-		'label'       => __( 'MMI Purchase Orders, with ShipStation connected in its Settings', 'mmi-po' ),
-		'product_url' => '',
-	) );
-	add_filter( 'mmi_feature_gate_is_available', static function ( $available, $slug ) {
-		return $slug === 'mmi-po' ? true : $available;
-	}, 10, 2 );
+	// ShipStation tracking to Reverb). MMI_Feature_Gate sees this plugin is loaded on its own.
 
 	if ( is_admin() ) {
 		require_once MMI_PO_PATH . 'includes/admin/class-po-admin.php';
