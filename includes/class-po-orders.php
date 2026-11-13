@@ -164,6 +164,7 @@ class MMI_PO_Orders {
 			),
 			ARRAY_A
 		);
+		// audit-ok: $where_sql joins '1=1' and $wpdb->prepare() fragments; tables are plugin constants
 		$total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$orders} o LEFT JOIN {$sups} s ON s.id = o.supplier_id WHERE {$where_sql}" );
 		$counts = array_fill_keys( array_keys( self::STATUSES ), 0 );
 		foreach ( $wpdb->get_results( "SELECT status, COUNT(*) AS n FROM {$orders} GROUP BY status", ARRAY_A ) as $c ) {
