@@ -40,10 +40,14 @@ class MMI_PO_Products {
 		$brand_sql = '';
 		$brand_ids = array_values( array_filter( array_map( 'absint', $brand_ids ) ) );
 		if ( $brand_ids ) {
-			$brand_sql = " AND COALESCE(NULLIF(p.post_parent, 0), p.ID) IN (
+			// Prepared on its own, like $title_sql, so its placeholders and values stay together.
+			$brand_sql = $wpdb->prepare(
+				" AND COALESCE(NULLIF(p.post_parent, 0), p.ID) IN (
 				SELECT tr.object_id FROM {$wpdb->term_relationships} tr
 				JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id
-				WHERE tt.taxonomy = 'product_brand' AND tt.term_id IN (" . implode( ',', array_fill( 0, count( $brand_ids ), '%d' ) ) . '))';
+				WHERE tt.taxonomy = 'product_brand' AND tt.term_id IN (" . implode( ',', array_fill( 0, count( $brand_ids ), '%d' ) ) . '))',
+				$brand_ids
+			);
 		}
 
 		// Rank: exact code match, then code prefix, then title-only matches.
@@ -64,7 +68,12 @@ class MMI_PO_Products {
 				. $brand_sql . "
 			ORDER BY rank_order ASC, (p.post_status = 'publish') DESC, p.post_title ASC
 			LIMIT %d",
-			array_merge( array( $term, $prefix, $term, $prefix, $prefix ), $brand_ids, array( self::LIMIT ) )
+			$term,
+			$prefix,
+			$term,
+			$prefix,
+			$prefix,
+			self::LIMIT
 		);
 		$rows = $wpdb->get_results( $sql, ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- prepared above.
 		if ( ! $rows ) {
