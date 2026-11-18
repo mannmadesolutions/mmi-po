@@ -410,7 +410,12 @@ class MMI_PO_Admin {
 	}
 
 	private static function guard( string $context = 'operate' ): void {
-		check_ajax_referer( self::NONCE_ACTION, 'nonce' );
+		if ( ! check_ajax_referer( self::NONCE_ACTION, 'nonce', false ) ) {
+			if ( class_exists( 'MMI_Audit_Log' ) ) {
+				MMI_Audit_Log::denied( 'mmi-po', 'ajax.' . sanitize_key( wp_unslash( $_REQUEST['action'] ?? '' ) ) );
+			}
+			wp_send_json_error( array( 'message' => __( 'Your session expired. Reload the page and try again.', 'mmi-po' ) ), 403 );
+		}
 		if ( ! mmi_po_user_can( $context ) ) {
 			if ( class_exists( 'MMI_Audit_Log' ) ) {
 				MMI_Audit_Log::denied( 'mmi-po', 'ajax.' . sanitize_key( wp_unslash( $_REQUEST['action'] ?? '' ) ) );

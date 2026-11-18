@@ -38,12 +38,12 @@ class MMI_PO_Products {
 		$lookup      = $wpdb->prefix . 'wc_product_meta_lookup';
 
 		$brand_sql = '';
-		$brand_ids = array_filter( array_map( 'absint', $brand_ids ) );
+		$brand_ids = array_values( array_filter( array_map( 'absint', $brand_ids ) ) );
 		if ( $brand_ids ) {
 			$brand_sql = " AND COALESCE(NULLIF(p.post_parent, 0), p.ID) IN (
 				SELECT tr.object_id FROM {$wpdb->term_relationships} tr
 				JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id
-				WHERE tt.taxonomy = 'product_brand' AND tt.term_id IN (" . implode( ',', $brand_ids ) . '))';
+				WHERE tt.taxonomy = 'product_brand' AND tt.term_id IN (" . implode( ',', array_fill( 0, count( $brand_ids ), '%d' ) ) . '))';
 		}
 
 		// Rank: exact code match, then code prefix, then title-only matches.
@@ -64,12 +64,7 @@ class MMI_PO_Products {
 				. $brand_sql . "
 			ORDER BY rank_order ASC, (p.post_status = 'publish') DESC, p.post_title ASC
 			LIMIT %d",
-			$term,
-			$prefix,
-			$term,
-			$prefix,
-			$prefix,
-			self::LIMIT
+			array_merge( array( $term, $prefix, $term, $prefix, $prefix ), $brand_ids, array( self::LIMIT ) )
 		);
 		$rows = $wpdb->get_results( $sql, ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- prepared above.
 		if ( ! $rows ) {
@@ -88,9 +83,12 @@ class MMI_PO_Products {
 		}
 		$lookup = $wpdb->prefix . 'wc_product_meta_lookup';
 		$rows   = $wpdb->get_results(
-			"SELECT p.ID, p.post_title, p.post_status, p.post_parent, l.sku, l.stock_status, l.stock_quantity
-			 FROM {$wpdb->posts} p LEFT JOIN {$lookup} l ON l.product_id = p.ID
-			 WHERE p.ID IN (" . implode( ',', $ids ) . ')',
+			$wpdb->prepare(
+				"SELECT p.ID, p.post_title, p.post_status, p.post_parent, l.sku, l.stock_status, l.stock_quantity
+				 FROM {$wpdb->posts} p LEFT JOIN {$lookup} l ON l.product_id = p.ID
+				 WHERE p.ID IN (" . implode( ',', array_fill( 0, count( $ids ), '%d' ) ) . ')',
+				$ids
+			),
 			ARRAY_A
 		);
 		return $rows ? self::enrich( $rows ) : array();
@@ -225,7 +223,7 @@ class MMI_PO_Products {
 			$mpn   = trim( (string) ( $m['mpn'] ?? '' ) );
 			$cost  = isset( $m[ self::COST_META ] ) && $m[ self::COST_META ] !== '' ? (float) $m[ self::COST_META ] : null;
 
-			$out[] = array(
+			$entry = array(
 				'product_id'   => $id,
 				'title'        => html_entity_decode( $row['post_title'], ENT_QUOTES, 'UTF-8' ),
 				'status'       => $row['post_status'],
@@ -242,7 +240,8 @@ class MMI_PO_Products {
 				'stock_qty'    => $row['stock_quantity'] === null ? null : (float) $row['stock_quantity'],
 				'supplier_id'  => $brand ? ( $brand_map[ $brand['id'] ] ?? 0 ) : 0,
 			) + self::size_from_meta( $m );
-			if ( self::size_missing( end( $out ) ) ) {
+			$out[] = $entry;
+			if ( self::size_missing( $entry ) ) {
 				$need_feed[ count( $out ) - 1 ] = array( 'gtin' => (string) ( $m['_global_unique_id'] ?? '' ), 'sku' => (string) $row['sku'], 'mpn' => $mpn );
 			}
 		}

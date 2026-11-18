@@ -52,7 +52,17 @@ if ( ! function_exists( 'mmi_po_audit' ) ) {
 
 require_once MMI_PO_PATH . 'includes/class-po-install.php';
 
-register_activation_hook( __FILE__, array( 'MMI_PO_Install', 'install' ) );
+register_activation_hook( __FILE__, static function () {
+	if ( ! class_exists( 'WooCommerce' ) ) {
+		deactivate_plugins( plugin_basename( __FILE__ ) );
+		wp_die(
+			esc_html__( 'MMI Purchase Orders requires WooCommerce to be active.', 'mmi-po' ),
+			esc_html__( 'Plugin Dependency Error', 'mmi-po' ),
+			array( 'back_link' => true )
+		);
+	}
+	MMI_PO_Install::install();
+} );
 
 /* ── Boot: WooCommerce is the one hard dependency (products, brands, currency) ── */
 add_action( 'plugins_loaded', static function () {
