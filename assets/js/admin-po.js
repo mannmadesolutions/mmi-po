@@ -196,9 +196,9 @@
         markedEmailed: 'Marked %number% as emailed to %to%.',
         mailFiles: 'the PO\'s PDF',
         mailFilesWithLabel: 'the PO\'s PDF and the shipping label',
-        mailHintApp: 'Downloads a draft file with %files% attached. Open it and your mail app shows this message ready to send.',
-        mailHintShare: 'Opens the share sheet with %files%. Choose Mail and the message is filled in. Add the supplier\'s address there: a share sheet cannot carry one.',
-        mailHintLink: 'Opens a draft of this message. A link cannot carry a file: attach %files% yourself, from your downloads.',
+        mailHintLink: 'Opens a draft of this message, with your own sender and signature. A link cannot carry a file: attach %files% yourself, from your downloads.',
+        mailHintShare: 'Opens the share sheet with %files%. Choose Mail for a new message with them attached. Add the supplier\'s address, and the subject if it is missing: a share sheet does not carry them reliably.',
+        mailHintEml: 'Downloads a draft file with %files% attached. Outlook for Windows and Thunderbird open it ready to send. Apple Mail shows it as a received message with no sender or signature, so use another choice there.',
         shareAgain: 'The files are ready. Click "Open as a draft" once more to open the share sheet.',
         fileError: 'The file could not be prepared. Try Download PDF to see why.',
         costNote: '%count% line(s) have no unit cost. Each needs one before this PO is emailed or downloaded.',
@@ -353,7 +353,7 @@
     /**
      * Compose link per mail app that is reached by a link, from a draft {to: [], cc: [], subject,
      * body}. The keys are among MMI_PO_Mailer::MAIL_APPS. No link can carry an attachment (a limit
-     * of browsers), which is why 'app' (a draft file) and 'share' (the share sheet) are not here.
+     * of browsers), which is why 'eml' (a draft file) and 'share' (the share sheet) are not here.
      */
     const MAIL_LINKS = {
         link: (d) => `mailto:${d.to.map(encodeURIComponent).join(',')}?${mailQuery({ cc: d.cc.join(','), subject: d.subject, body: d.body.replace(/\r?\n/g, '\r\n') })}`,
@@ -365,7 +365,7 @@
 
     /** What the hint under the mail-app choice says for the two that carry the files; the rest are links. */
     const MAIL_HINTS = {
-        app: MESSAGES.mailHintApp,
+        eml: MESSAGES.mailHintEml,
         share: MESSAGES.mailHintShare,
     };
 

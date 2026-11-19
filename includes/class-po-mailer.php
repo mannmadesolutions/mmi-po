@@ -22,12 +22,13 @@ class MMI_PO_Mailer {
 	/**
 	 * Where the Send dialog can open the message as a draft instead of sending it from the site.
 	 * These are the names shown and logged; what each key does is in admin-po.js ("Own mail app").
-	 * Only 'app' (a draft file built here) and 'share' can carry the PDF: a link never can.
+	 * The first is the default. A link opens a true draft (the app's own sender and signature)
+	 * but can never carry a file; only 'share' and 'eml' (a draft file built here) can.
 	 */
 	const MAIL_APPS = array(
-		'app'        => 'Mail app (draft file, PDF attached)',
-		'share'      => 'Share sheet to Mail (PDF attached)',
-		'link'       => 'Mail app (link, nothing attached)',
+		'link'       => 'Mail app (opens a draft; you attach the files)',
+		'share'      => 'Share sheet to Mail (files attached)',
+		'eml'        => 'Draft file for Outlook or Thunderbird (files attached)',
 		'gmail'      => 'Gmail',
 		'outlook365' => 'Outlook on the web (work or school)',
 		'outlook'    => 'Outlook.com',
@@ -100,7 +101,7 @@ class MMI_PO_Mailer {
 			return $ready;
 		}
 		$order = $ready['order'];
-		$app   = self::MAIL_APPS[ $app ] ?? self::MAIL_APPS['app'];
+		$app   = self::MAIL_APPS[ $app ] ?? self::MAIL_APPS['link'];
 		$costs = MMI_PO_Orders::check_costs( $order, $no_cost_ok, 'an email from ' . $app );
 		if ( is_wp_error( $costs ) ) {
 			return $costs;
@@ -122,9 +123,10 @@ class MMI_PO_Mailer {
 
 	/**
 	 * The message as a draft file (.eml) with the PO's PDF, and the shipping label when asked,
-	 * attached: for the user's own mail app. X-Unsent (Outlook, Thunderbird) and
-	 * X-Uniform-Type-Identifier (Apple Mail) ask the app to open it for editing rather than as
-	 * received mail. There is no From header: the app sends from its own account.
+	 * attached: for the user's own mail app. X-Unsent asks Outlook and Thunderbird to open it for
+	 * editing rather than as received mail. X-Uniform-Type-Identifier is Apple Mail's own draft
+	 * mark, but current Apple Mail shows the file as received mail all the same, which is why
+	 * this is not the default. There is no From header: the app sends from its own account.
 	 *
 	 * @return array|WP_Error {name: string, bytes: string}
 	 */
