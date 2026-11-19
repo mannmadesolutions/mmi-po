@@ -28,7 +28,8 @@ class MMI_PO_Orders {
 	);
 
 	const MAX_LINES          = 500;
-	const RECENT_WC_ORDERS   = 25;
+	const WC_ORDER_RESULTS   = 25;
+	const WC_ORDER_PRODUCTS  = 3;
 	const MAX_NUMBER_RETRIES = 20;
 
 	public static function get( int $id ): ?array {
@@ -51,30 +52,63 @@ class MMI_PO_Orders {
 	}
 
 	/**
-	 * Latest WooCommerce orders, for numbering a PO after the sale it fulfils.
-	 * Each row carries the PO number already using that order number, if any.
+	 * WooCommerce orders a PO can start from: the latest ones, or the newest that match a search
+	 * (order number, customer name or email, a product on the order). The matching is
+	 * WooCommerce's own order search, so it finds what the Orders screen finds.
 	 */
-	public static function recent_wc_orders(): array {
-		global $wpdb;
-		$orders = wc_get_orders( array(
-			'limit'   => self::RECENT_WC_ORDERS,
+	public static function find_wc_orders( string $term = '' ): array {
+		$args = array(
+			'limit'   => self::WC_ORDER_RESULTS,
 			'orderby' => 'date',
 			'order'   => 'DESC',
 			'type'    => 'shop_order',
 			'status'  => array_diff( array_keys( wc_get_order_statuses() ), array( 'wc-checkout-draft' ) ),
-		) );
+		);
+		$term = ltrim( trim( $term ), '#' );
+		if ( $term !== '' ) {
+			if ( class_exists( '\Automattic\WooCommerce\Utilities\OrderUtil' ) && \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled() ) {
+				$args['s'] = $term;
+			} else {
+				// Orders stored as posts: 's' would search post titles, so ask the order search for ids.
+				$ids = array_map( 'absint', (array) wc_order_search( $term ) );
+				if ( ! $ids ) {
+					return array();
+				}
+				rsort( $ids );
+				$args['post__in'] = array_slice( $ids, 0, self::WC_ORDER_RESULTS );
+			}
+		}
+		return self::wc_order_rows( wc_get_orders( $args ) );
+	}
+
+	/**
+	 * Orders as picker rows. Each carries the PO number it would get next (prefix + order
+	 * number, then -2, -3 … when POs already use it).
+	 *
+	 * @param WC_Order[] $orders
+	 */
+	public static function wc_order_rows( array $orders ): array {
+		global $wpdb;
 		$prefix = (string) MMI_PO_Settings::get( 'number_prefix' );
 		$rows   = array();
 		foreach ( $orders as $o ) {
-			$name   = trim( $o->get_shipping_first_name() . ' ' . $o->get_shipping_last_name() );
+			if ( ! $o instanceof WC_Order ) {
+				continue;
+			}
+			$name     = trim( $o->get_shipping_first_name() . ' ' . $o->get_shipping_last_name() );
+			$products = array();
+			foreach ( $o->get_items() as $item ) {
+				$products[] = html_entity_decode( $item->get_name(), ENT_QUOTES, 'UTF-8' );
+			}
 			$rows[] = array(
-				'id'     => $o->get_id(),
-				'number' => (string) $o->get_order_number(),
-				'date'   => $o->get_date_created() ? $o->get_date_created()->date_i18n( 'M j' ) : '',
-				'name'   => $name !== '' ? $name : trim( $o->get_billing_first_name() . ' ' . $o->get_billing_last_name() ),
-				'total'  => html_entity_decode( wp_strip_all_tags( wc_price( (float) $o->get_total(), array( 'currency' => $o->get_currency() ) ) ), ENT_QUOTES, 'UTF-8' ),
-				'status' => wc_get_order_status_name( $o->get_status() ),
-				'items'  => (int) $o->get_item_count(),
+				'id'       => $o->get_id(),
+				'number'   => (string) $o->get_order_number(),
+				'date'     => $o->get_date_created() ? $o->get_date_created()->date_i18n( 'M j, Y' ) : '',
+				'name'     => $name !== '' ? $name : trim( $o->get_billing_first_name() . ' ' . $o->get_billing_last_name() ),
+				'total'    => html_entity_decode( wp_strip_all_tags( wc_price( (float) $o->get_total(), array( 'currency' => $o->get_currency() ) ) ), ENT_QUOTES, 'UTF-8' ),
+				'status'   => wc_get_order_status_name( $o->get_status() ),
+				'lines'    => count( $products ),
+				'products' => array_slice( $products, 0, self::WC_ORDER_PRODUCTS ),
 			);
 		}
 		// One query for which of these numbers already have POs (prefix + number, or with a -N suffix).

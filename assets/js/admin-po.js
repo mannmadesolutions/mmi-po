@@ -59,9 +59,13 @@
         ADDR_INPUT: '#mmi-po-ship-to [data-addr]',
         DEST_RADIO: 'input[name="mmi-po-dest"]',
         DROPSHIP: '#mmi-po-dropship',
-        WC_ORDER: '#mmi-po-wc-order',
-        WC_LOAD: '#mmi-po-wc-load',
+        DROPSHIP_HINT: '#mmi-po-dropship-hint',
         WC_LINK: '#mmi-po-wc-link',
+        ORDER_SEARCH: '#mmi-po-order-search',
+        ORDER_SPINNER: '#mmi-po-order-spinner',
+        ORDER_RESULTS: '#mmi-po-order-results',
+        PICKED: '#mmi-po-picked',
+        PICKED_ADD: '.mmi-po-picked-add',
         LABEL_MODE_RADIO: 'input[name="mmi-po-label-mode"]',
         LABEL_OURS: '#mmi-po-label-ours',
         LABEL_SUPPLIER: '#mmi-po-label-supplier',
@@ -108,6 +112,8 @@
         INSTRUCTIONS: '#mmi-po-instructions',
         NOTES: '#mmi-po-notes',
         SEARCH: '#mmi-po-search',
+        SEARCH_WRAP: '.mmi-po-search',
+        ANY_RESULTS: '.mmi-po-results',
         SEARCH_SPINNER: '#mmi-po-search-spinner',
         RESULTS: '#mmi-po-results',
         RESULT: '.mmi-po-result',
@@ -181,8 +187,27 @@
         needLines: 'Add at least one line first.',
         historyFile: 'PDF sent',
         policyOnly: '%supplier% ships on their own labels only, so this PO cannot include a prepaid label.',
-        wcLoaded: 'Loaded order #%number%: shipping address and %count% product line(s).',
-        wcLink: 'Order #%number% ↗',
+        wcLink: 'Ships to the customer on order #%number% ↗',
+        latestOrders: 'Latest orders',
+        noOrders: 'No orders match "%term%".',
+        noOrdersYet: 'No orders yet.',
+        orderTitle: '#%number% · %name%',
+        moreProducts: ' +%more% more',
+        orderNoProducts: 'No products',
+        orderHasPo: '%count% PO already',
+        orderAlready: 'Order #%number% is already loaded on this PO.',
+        orderEmpty: 'Order #%number% has no products that are still in the catalog.',
+        orderAdded: 'Order #%number%: added %count% line(s).',
+        orderPartly: 'Order #%number%: added %count% line(s). %waiting% more from other suppliers are listed under the order, not on this PO.',
+        orderChoose: 'Order #%number%: nothing added yet. Choose which of its products belong on this PO, under the order.',
+        pickedHead: 'Order #%number% ↗',
+        pickedMeta: '%name% · %date% · %total% · %status%',
+        pickedWaiting: 'Not on this PO:',
+        pickedNoSupplier: 'No supplier linked',
+        pickedLines: '· %count% line(s): %titles%',
+        pickedStart: 'Use this supplier',
+        pickedAdd: 'Add to this PO',
+        pickedMissing: 'No longer in the catalog, so add by hand if needed: %titles%',
         rbAllCarriers: 'All carriers',
         rbAvailable: '%n% out of %total% carriers available',
         rbLoading: 'Getting rates…',
@@ -223,8 +248,6 @@
         SEND_BUSY: '<span class="mmi-loading"></span> Sending…',
         SUPPLIER_IDLE: '<span class="dashicons dashicons-saved"></span> Save supplier',
         RB_BUY_BUSY: '<span class="mmi-loading"></span> Buying…',
-        LOAD_IDLE: '<span class="dashicons dashicons-download"></span> Load address & items',
-        LOAD_BUSY: '<span class="mmi-loading"></span> Loading…',
         TEST_IDLE: '<span class="dashicons dashicons-yes-alt"></span> Test connection',
         TEST_BUSY: '<span class="mmi-loading"></span> Testing…',
         SUPPLIER_BUSY: '<span class="mmi-loading"></span> Saving…',
@@ -302,6 +325,13 @@
         searchTimer: null,
         searchXhr: 0,
         lastResults: [],
+        orderTimer: null,
+        orderXhr: 0,
+        orderResults: [],
+        /** The WooCommerce order picked this session: its row, address, and lines grouped by supplier. */
+        picked: null,
+        /** The PO number the picker filled in, so picking another order may replace it but never a typed one. */
+        pickedNumber: '',
         rb: { carriers: null, results: {}, selected: 'all', rate: null, run: 0 },
 
         init() {
@@ -390,22 +420,22 @@
 
         renderDest() {
             const customer = this.dest() === 'customer';
+            const id = customer ? Number(this.order.wc_order_id) || 0 : 0;
             $(SELECTORS.DROPSHIP).prop('hidden', !customer);
-            const id = Number(this.order.wc_order_id) || 0;
+            $(SELECTORS.DROPSHIP_HINT).prop('hidden', id > 0);
             $(SELECTORS.WC_LINK)
                 .prop('hidden', !id)
                 .attr('href', id ? CFG.wcOrderUrl.replace('%id%', id) : '#')
                 .text(id ? fmt(MESSAGES.wcLink, { number: id }) : '');
-            if (id && !$(SELECTORS.WC_ORDER).val()) {
-                $(SELECTORS.WC_ORDER).val(id);
-            }
         },
 
         onDestChange() {
             if (this.dest() === 'store') {
                 this.fillAddress(CFG.defaults.ship_to_fields);
                 this.order.wc_order_id = 0;
-                $(SELECTORS.WC_ORDER).val('');
+            } else if (this.picked) {
+                this.fillAddress(this.picked.address);
+                this.order.wc_order_id = this.picked.order.id;
             } else if (this.sameAsStore(this.collectAddress())) {
                 this.fillAddress({ country: 'US', residential: 1 });
             }
@@ -413,25 +443,178 @@
             this.markDirty();
         },
 
-        loadWcOrder() {
-            const number = $(SELECTORS.WC_ORDER).val().trim();
-            if (!number) {
+        /* Customer order */
+
+        queueOrderSearch() {
+            clearTimeout(this.orderTimer);
+            this.orderTimer = setTimeout(() => this.runOrderSearch(), TIMING.SEARCH_DEBOUNCE_MS);
+        },
+
+        /** Fewer than minSearch characters lists the latest orders instead of searching. */
+        runOrderSearch() {
+            const typed = $(SELECTORS.ORDER_SEARCH).val().trim();
+            const term = typed.length >= CFG.minSearch ? typed : '';
+            const $results = $(SELECTORS.ORDER_RESULTS);
+            const requestId = ++this.orderXhr;
+            $(SELECTORS.ORDER_SPINNER).prop('hidden', false);
+            ajax('search_wc_orders', { term })
+                .then((data) => {
+                    if (requestId !== this.orderXhr) {
+                        return; // A newer search, or a pick, superseded this one.
+                    }
+                    this.orderResults = data.results;
+                    this.renderOrderResults(term);
+                })
+                .catch((msg) => {
+                    if (requestId === this.orderXhr) {
+                        $results.html(`<div class="mmi-po-results-empty">${esc(msg)}</div>`).prop('hidden', false);
+                    }
+                })
+                .finally(() => {
+                    if (requestId === this.orderXhr) {
+                        $(SELECTORS.ORDER_SPINNER).prop('hidden', true);
+                    }
+                });
+        },
+
+        renderOrderResults(term) {
+            const $results = $(SELECTORS.ORDER_RESULTS);
+            if (!this.orderResults.length) {
+                $results.html(`<div class="mmi-po-results-empty">${esc(term ? fmt(MESSAGES.noOrders, { term }) : MESSAGES.noOrdersYet)}</div>`).prop('hidden', false);
                 return;
             }
-            const $btn = $(SELECTORS.WC_LOAD);
-            setBusy($btn, true, LABELS.LOAD_IDLE, LABELS.LOAD_BUSY);
-            ajax('load_wc_order', { order: number })
-                .then((data) => {
-                    this.fillAddress(data.address);
-                    this.order.wc_order_id = data.id;
-                    data.lines.forEach((line) => this.addResult(line, true, Math.max(1, line.qty)));
-                    this.renderDest();
-                    this.recalc();
-                    this.markDirty();
-                    this.message(fmt(MESSAGES.wcLoaded, { number: data.number, count: data.lines.length }));
-                })
+            const heading = term ? '' : `<div class="mmi-po-results-head">${esc(MESSAGES.latestOrders)}</div>`;
+            const html = this.orderResults.map((o, i) => {
+                const more = o.lines - o.products.length;
+                const products = o.products.join(', ') + (more > 0 ? fmt(MESSAGES.moreProducts, { more }) : '');
+                const used = o.po_uses ? `<span class="mmi-badge info">${esc(fmt(MESSAGES.orderHasPo, { count: o.po_uses }))}</span>` : '';
+                return `<button type="button" class="mmi-po-result" data-index="${i}">
+                    <span class="mmi-po-result-main"><span class="mmi-po-result-title">${esc(fmt(MESSAGES.orderTitle, { number: o.number, name: o.name }))}</span>
+                    <span class="mmi-po-result-meta">${esc(products || MESSAGES.orderNoProducts)}</span></span>
+                    <span class="mmi-po-result-side"><span class="mmi-text-muted">${esc(o.date)}</span> <strong>${esc(o.total)}</strong> <span class="mmi-badge">${esc(o.status)}</span> ${used}</span>
+                </button>`;
+            }).join('');
+            $results.html(heading + html).prop('hidden', false);
+        },
+
+        pickOrder(row) {
+            if (!row) {
+                return;
+            }
+            const requestId = ++this.orderXhr;
+            $(SELECTORS.ORDER_RESULTS).prop('hidden', true);
+            $(SELECTORS.ORDER_SEARCH).val('').trigger('blur');
+            if (this.picked && this.picked.order.id === row.id) {
+                // Loading it twice would double every quantity.
+                $(SELECTORS.ORDER_SPINNER).prop('hidden', true);
+                this.message(fmt(MESSAGES.orderAlready, { number: row.number }), 'warning');
+                return;
+            }
+            $(SELECTORS.ORDER_SPINNER).prop('hidden', false);
+            ajax('load_wc_order', { order: row.id })
+                .then((data) => this.applyPickedOrder(data))
                 .catch((msg) => this.message(msg, 'error'))
-                .finally(() => setBusy($btn, false, LABELS.LOAD_IDLE, LABELS.LOAD_BUSY));
+                .finally(() => {
+                    if (requestId === this.orderXhr) {
+                        $(SELECTORS.ORDER_SPINNER).prop('hidden', true);
+                    }
+                });
+        },
+
+        /**
+         * One PO goes to one supplier, so the order's lines are grouped by their usual supplier
+         * (0 = a brand no supplier is linked to). The group this PO is for is added; the others
+         * wait in the picked-order panel for a click.
+         */
+        applyPickedOrder(data) {
+            const bySupplier = new Map();
+            data.lines.forEach((line) => {
+                const supplierId = this.suppliers[line.supplier_id] ? line.supplier_id : 0;
+                if (!bySupplier.has(supplierId)) {
+                    bySupplier.set(supplierId, { supplier_id: supplierId, lines: [], added: false });
+                }
+                bySupplier.get(supplierId).lines.push(line);
+            });
+            // Suppliers in the order's own sequence, the unlinked lines last.
+            const groups = [...bySupplier.values()].sort((a, b) => Number(!a.supplier_id) - Number(!b.supplier_id));
+            this.picked = { order: data.order, address: data.address, missing: data.missing, groups };
+
+            const $number = $(SELECTORS.NUMBER_INPUT);
+            const typed = $number.val().trim();
+            if (!$number.prop('disabled') && (typed === '' || typed === this.pickedNumber)) {
+                $number.val(data.order.po_next);
+                this.pickedNumber = data.order.po_next;
+            }
+            if (this.dest() === 'customer') {
+                this.fillAddress(data.address);
+                this.order.wc_order_id = data.order.id;
+            }
+            const group = this.groupForThisPo();
+            if (group) {
+                this.addGroup(group);
+            }
+            this.renderPicked();
+            this.renderDest();
+            this.markDirty();
+
+            const added = group ? group.lines.length : 0;
+            const values = { number: data.order.number, count: added, waiting: data.lines.length - added };
+            if (!data.lines.length) {
+                this.message(fmt(MESSAGES.orderEmpty, values), 'warning');
+            } else if (!added) {
+                this.message(fmt(MESSAGES.orderChoose, values), 'warning');
+            } else {
+                this.message(fmt(values.waiting ? MESSAGES.orderPartly : MESSAGES.orderAdded, values));
+            }
+        },
+
+        /** The picked order's group that belongs on this PO without asking; null when the user has to choose. */
+        groupForThisPo() {
+            const groups = this.picked.groups;
+            const unlinked = groups.find((g) => !g.supplier_id) || null;
+            const linked = groups.filter((g) => g.supplier_id);
+            const current = this.supplier();
+            if (current) {
+                // A supplier with no brands linked can't be matched to products, so it takes the unlinked lines.
+                return groups.find((g) => g.supplier_id === current.id) || (current.brand_ids.length ? null : unlinked);
+            }
+            if (linked.length === 1) {
+                return linked[0];
+            }
+            return linked.length ? null : unlinked;
+        },
+
+        /** addResult() also selects the group's supplier when the PO has none yet. */
+        addGroup(group) {
+            group.lines.forEach((line) => this.addResult(line, true, Math.max(1, line.qty)));
+            group.added = true;
+        },
+
+        renderPicked() {
+            const $panel = $(SELECTORS.PICKED);
+            if (!this.picked) {
+                $panel.prop('hidden', true).empty();
+                return;
+            }
+            const o = this.picked.order;
+            const hasSupplier = !!this.supplier();
+            const rows = this.picked.groups.map((g, i) => {
+                if (g.added) {
+                    return '';
+                }
+                const name = g.supplier_id ? this.suppliers[g.supplier_id].name : MESSAGES.pickedNoSupplier;
+                const lines = fmt(MESSAGES.pickedLines, { count: g.lines.length, titles: g.lines.map((l) => l.title).join('; ') });
+                return `<li><span><strong>${esc(name)}</strong> ${esc(lines)}</span>
+                    <button type="button" class="button button-small mmi-po-picked-add" data-index="${i}">${esc(!hasSupplier && g.supplier_id ? MESSAGES.pickedStart : MESSAGES.pickedAdd)}</button></li>`;
+            }).filter(Boolean);
+            const waiting = rows.length ? `<div class="mmi-po-picked-waiting">${esc(MESSAGES.pickedWaiting)}</div><ul>${rows.join('')}</ul>` : '';
+            const missing = this.picked.missing.length
+                ? `<div class="mmi-text-warning">${esc(fmt(MESSAGES.pickedMissing, { titles: this.picked.missing.join('; ') }))}</div>`
+                : '';
+            $panel.html(`<div class="mmi-po-picked-head">
+                    <a target="_blank" rel="noopener" href="${esc(CFG.wcOrderUrl.replace('%id%', o.id))}">${esc(fmt(MESSAGES.pickedHead, { number: o.number }))}</a>
+                    <span class="mmi-text-muted">${esc(fmt(MESSAGES.pickedMeta, { name: o.name, date: o.date, total: o.total, status: o.status }))}</span>
+                </div>${waiting}${missing}`).prop('hidden', false);
         },
 
         /* Shipping */
@@ -755,8 +938,21 @@
             $(SELECTORS.SUPPLIER).on('change', () => this.onSupplierChange());
             $([SELECTORS.DATE, SELECTORS.NUMBER_INPUT, SELECTORS.ADDR_INPUT, SELECTORS.INSTRUCTIONS, SELECTORS.NOTES, SELECTORS.PKG_INPUT].join(',')).on('input change', () => this.markDirty());
             $(SELECTORS.DEST_RADIO).on('change', () => this.onDestChange());
-            $(SELECTORS.WC_LOAD).on('click', () => this.loadWcOrder());
-            $(SELECTORS.WC_ORDER).on('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.loadWcOrder(); } });
+            $(SELECTORS.ORDER_SEARCH)
+                .on('input', () => this.queueOrderSearch())
+                .on('focus', () => {
+                    if ($(SELECTORS.ORDER_RESULTS).prop('hidden')) {
+                        this.runOrderSearch();
+                    }
+                })
+                .on('keydown', (e) => this.onResultsKey(e, SELECTORS.ORDER_RESULTS, () => this.pickOrder(this.orderResults[0])));
+            $(SELECTORS.ORDER_RESULTS).on('click', SELECTORS.RESULT, function () {
+                self.pickOrder(self.orderResults[$(this).data('index')]);
+            });
+            $(SELECTORS.PICKED).on('click', SELECTORS.PICKED_ADD, function () {
+                self.addGroup(self.picked.groups[$(this).data('index')]);
+                self.renderPicked();
+            });
             $(SELECTORS.LABEL_MODE_RADIO).on('change', () => { this.markDirty(); this.renderShipping(); });
             $(SELECTORS.BROWSE_RATES).on('click', () => this.openRateBrowser());
             $(SELECTORS.RB_FORM).on('submit', (e) => { e.preventDefault(); this.rbBrowse(); });
@@ -805,15 +1001,14 @@
 
             $(SELECTORS.SEARCH)
                 .on('input', () => this.queueSearch())
-                .on('keydown', (e) => this.onSearchKey(e));
+                .on('keydown', (e) => this.onResultsKey(e, SELECTORS.RESULTS, () => this.addResult(this.lastResults[0])));
             $(SELECTORS.BRAND_ONLY).on('change', () => this.runSearch());
             $(SELECTORS.RESULTS).on('click', SELECTORS.RESULT, function () {
                 self.addResult(self.lastResults[$(this).data('index')]);
             });
             $(document).on('click', (e) => {
-                if (!$(e.target).closest('.mmi-po-search').length) {
-                    $(SELECTORS.RESULTS).prop('hidden', true);
-                }
+                // Close every result list except the one whose search box was clicked.
+                $(SELECTORS.SEARCH_WRAP).not($(e.target).closest(SELECTORS.SEARCH_WRAP)).find(SELECTORS.ANY_RESULTS).prop('hidden', true);
             });
 
             $(SELECTORS.SAVE).on('click', () => this.save().catch(() => {}));
@@ -860,6 +1055,7 @@
             }
             this.order.supplier_id = next ? next.id : 0;
             this.renderSupplierCard();
+            this.renderPicked();
             this.markDirty();
             this.renderShipping();
             if ($(SELECTORS.SEARCH).val().trim().length >= CFG.minSearch) {
@@ -955,14 +1151,16 @@
             $results.html(html).prop('hidden', false);
         },
 
-        onSearchKey(e) {
+        /** Shared by both search boxes: Enter takes the first listed result, Escape closes the list. */
+        onResultsKey(e, resultsSelector, pickFirst) {
+            const $results = $(resultsSelector);
             if (e.key === 'Enter') {
                 e.preventDefault();
-                if (this.lastResults.length && !$(SELECTORS.RESULTS).prop('hidden')) {
-                    this.addResult(this.lastResults[0]);
+                if (!$results.prop('hidden')) {
+                    pickFirst();
                 }
             } else if (e.key === 'Escape') {
-                $(SELECTORS.RESULTS).prop('hidden', true);
+                $results.prop('hidden', true);
             }
         },
 

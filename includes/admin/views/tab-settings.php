@@ -76,7 +76,7 @@ $mmi_po_s = MMI_PO_Settings::all();
 					<label for="mmi-po-next"><?php esc_html_e( 'Next number', 'mmi-po' ); ?></label>
 					<input type="number" id="mmi-po-next" name="next_number" min="1" list="mmi-po-next-orders" value="<?php echo esc_attr( (string) MMI_PO_Settings::next_number() ); ?>">
 					<datalist id="mmi-po-next-orders">
-						<?php foreach ( MMI_PO_Orders::recent_wc_orders() as $mmi_po_o ) : ?>
+						<?php foreach ( MMI_PO_Orders::find_wc_orders() as $mmi_po_o ) : ?>
 							<?php if ( ctype_digit( $mmi_po_o['number'] ) ) : ?>
 								<option value="<?php echo esc_attr( $mmi_po_o['number'] ); ?>"><?php echo esc_html( sprintf( 'Order #%s · %s · %s · %s', $mmi_po_o['number'], $mmi_po_o['date'], $mmi_po_o['name'], $mmi_po_o['total'] ) ); ?></option>
 							<?php endif; ?>

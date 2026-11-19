@@ -39,6 +39,19 @@ if ( ! defined( 'ABSPATH' ) ) {
 		<?php $mmi_po_section_head( 'building', __( 'Supplier & delivery', 'mmi-po' ), __( 'Who the order goes to and where it ships. The supplier\'s default instructions fill in when you pick one.', 'mmi-po' ) ); ?>
 		<div class="mmi-section-content">
 			<div class="mmi-po-grid">
+				<div class="mmi-po-field mmi-po-field--wide">
+					<label for="mmi-po-order-search"><?php esc_html_e( 'Start from a customer order (optional)', 'mmi-po' ); ?></label>
+					<div class="mmi-po-search">
+						<div class="mmi-toolbar">
+							<span class="dashicons dashicons-search"></span>
+							<input type="search" id="mmi-po-order-search" autocomplete="off" placeholder="<?php esc_attr_e( 'Order number, customer name or email, or a product on the order…', 'mmi-po' ); ?>">
+							<span class="mmi-loading" id="mmi-po-order-spinner" hidden></span>
+						</div>
+						<div class="mmi-po-results" id="mmi-po-order-results" hidden></div>
+					</div>
+					<p class="mmi-hint-text"><?php esc_html_e( 'Click the box for the latest orders, or type to search all of them. Picking an order adds its products for this PO\'s supplier; products from other suppliers are listed for you to add or leave.', 'mmi-po' ); ?></p>
+					<div class="mmi-po-picked" id="mmi-po-picked" hidden></div>
+				</div>
 				<div class="mmi-po-field">
 					<label for="mmi-po-supplier"><?php esc_html_e( 'Supplier', 'mmi-po' ); ?></label>
 					<select id="mmi-po-supplier">
@@ -47,19 +60,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 					<div class="mmi-po-supplier-card" id="mmi-po-supplier-card" hidden></div>
 				</div>
 				<div class="mmi-po-field">
-					<?php
-					$mmi_po_prefix = (string) MMI_PO_Settings::get( 'number_prefix' );
-					$mmi_po_recent = MMI_PO_Orders::recent_wc_orders();
-					?>
 					<label for="mmi-po-number-input"><?php esc_html_e( 'PO number', 'mmi-po' ); ?></label>
-					<input type="text" id="mmi-po-number-input" list="mmi-po-recent-orders" autocomplete="off"
-						placeholder="<?php echo esc_attr( sprintf( /* translators: %s: next number */ __( 'Next: %s — or pick an order', 'mmi-po' ), $mmi_po_prefix . MMI_PO_Settings::next_number() ) ); ?>">
-					<datalist id="mmi-po-recent-orders">
-						<?php foreach ( $mmi_po_recent as $mmi_po_o ) : ?>
-							<option value="<?php echo esc_attr( $mmi_po_o['po_next'] ?? $mmi_po_prefix . $mmi_po_o['number'] ); ?>"><?php echo esc_html( sprintf( '#%s · %s · %s · %s · %s%s', $mmi_po_o['number'], $mmi_po_o['date'], $mmi_po_o['name'], $mmi_po_o['total'], $mmi_po_o['status'], $mmi_po_o['po_uses'] ? sprintf( ' · %d PO already', $mmi_po_o['po_uses'] ) : '' ) ); ?></option>
-						<?php endforeach; ?>
-					</datalist>
-					<p class="mmi-hint-text"><?php esc_html_e( 'Pick a recent WooCommerce order to number this PO after the sale it fills, or leave blank for the next number. Locked once the PO is emailed.', 'mmi-po' ); ?></p>
+					<input type="text" id="mmi-po-number-input" autocomplete="off"
+						placeholder="<?php echo esc_attr( sprintf( /* translators: %s: next number */ __( 'Next: %s', 'mmi-po' ), MMI_PO_Settings::get( 'number_prefix' ) . MMI_PO_Settings::next_number() ) ); ?>">
+					<p class="mmi-hint-text"><?php esc_html_e( 'Leave blank for the next number. Picking a customer order above fills in that sale\'s number while this is blank. Locked once the PO is emailed.', 'mmi-po' ); ?></p>
 				</div>
 				<div class="mmi-po-field">
 					<label for="mmi-po-date"><?php esc_html_e( 'PO date', 'mmi-po' ); ?></label>
@@ -75,11 +79,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 						<label class="mmi-po-inline"><input type="radio" name="mmi-po-dest" value="store" id="mmi-po-dest-store"> <?php esc_html_e( 'Our address (inbound)', 'mmi-po' ); ?></label>
 						<label class="mmi-po-inline"><input type="radio" name="mmi-po-dest" value="customer" id="mmi-po-dest-customer"> <?php esc_html_e( 'A customer (drop-ship)', 'mmi-po' ); ?></label>
 					</div>
-					<div class="mmi-toolbar mmi-po-dropship" id="mmi-po-dropship" hidden>
-						<label for="mmi-po-wc-order"><?php esc_html_e( 'WooCommerce order #', 'mmi-po' ); ?></label>
-						<input type="text" id="mmi-po-wc-order" inputmode="numeric">
-						<button type="button" class="button" id="mmi-po-wc-load"><span class="dashicons dashicons-download"></span> <?php esc_html_e( 'Load address & items', 'mmi-po' ); ?></button>
+					<div class="mmi-po-dropship" id="mmi-po-dropship" hidden>
 						<a id="mmi-po-wc-link" target="_blank" rel="noopener" hidden></a>
+						<span class="mmi-hint-text" id="mmi-po-dropship-hint"><?php esc_html_e( 'Pick the customer\'s order at the top of this section to fill the address, or type it in.', 'mmi-po' ); ?></span>
 					</div>
 				</div>
 				<div class="mmi-po-field mmi-po-field--wide">

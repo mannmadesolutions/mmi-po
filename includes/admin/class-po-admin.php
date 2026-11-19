@@ -27,7 +27,7 @@ class MMI_PO_Admin {
 	/** Tabs that need the 'manage' capability (settings and credentials) rather than 'operate'. */
 	const MANAGE_TABS = array( 'settings' );
 
-	const AJAX_ACTIONS = array( 'search_products', 'save', 'set_status', 'duplicate', 'delete', 'email_draft', 'send', 'save_supplier', 'load_wc_order', 'rate_carriers', 'rates', 'buy_label', 'void_label', 'resolve_label', 'ss_carriers' );
+	const AJAX_ACTIONS = array( 'search_products', 'save', 'set_status', 'duplicate', 'delete', 'email_draft', 'send', 'save_supplier', 'search_wc_orders', 'load_wc_order', 'rate_carriers', 'rates', 'buy_label', 'void_label', 'resolve_label', 'ss_carriers' );
 
 	public static function init(): void {
 		add_action( 'admin_menu', array( __CLASS__, 'register_submenu' ) );
@@ -238,28 +238,42 @@ class MMI_PO_Admin {
 		wp_send_json_success( array( 'id' => $id, 'suppliers' => self::suppliers_for_js() ) );
 	}
 
-	/** Drop-ship: pull a WooCommerce order's shipping address and its lines (as PO lines). */
+	/** Order picker: the latest WooCommerce orders, or a search by number, customer or product. */
+	public static function ajax_search_wc_orders(): void {
+		self::guard();
+		$term = sanitize_text_field( wp_unslash( $_POST['term'] ?? '' ) );
+		wp_send_json_success( array( 'results' => MMI_PO_Orders::find_wc_orders( mb_strlen( $term ) < self::MIN_SEARCH ? '' : $term ) ) );
+	}
+
+	/**
+	 * A picked WooCommerce order: its picker row, shipping address and products (as PO lines, each
+	 * with its usual supplier so the editor can keep one supplier's lines per PO).
+	 */
 	public static function ajax_load_wc_order(): void {
 		self::guard();
-		$wc_order = wc_get_order( absint( preg_replace( '/\D/', '', (string) wp_unslash( $_POST['order'] ?? '' ) ) ) );
+		$wc_order = wc_get_order( absint( $_POST['order'] ?? 0 ) );
 		if ( ! $wc_order || $wc_order->get_type() !== 'shop_order' ) {
-			wp_send_json_error( array( 'message' => __( 'No WooCommerce order with that number.', 'mmi-po' ) ), 404 );
+			wp_send_json_error( array( 'message' => __( 'That WooCommerce order no longer exists.', 'mmi-po' ) ), 404 );
 		}
-		$qty = array();
+		$qty   = array();
+		$names = array();
 		foreach ( $wc_order->get_items() as $item ) {
-			$pid         = (int) ( $item->get_variation_id() ? $item->get_variation_id() : $item->get_product_id() );
-			$qty[ $pid ] = ( $qty[ $pid ] ?? 0 ) + (int) $item->get_quantity();
+			$pid           = (int) ( $item->get_variation_id() ? $item->get_variation_id() : $item->get_product_id() );
+			$qty[ $pid ]   = ( $qty[ $pid ] ?? 0 ) + (int) $item->get_quantity();
+			$names[ $pid ] = html_entity_decode( $item->get_name(), ENT_QUOTES, 'UTF-8' );
 		}
 		$lines = array();
 		foreach ( MMI_PO_Products::by_ids( array_keys( $qty ) ) as $product ) {
 			$product['qty'] = $qty[ $product['product_id'] ] ?? 1;
 			$lines[]        = $product;
+			unset( $names[ $product['product_id'] ] );
 		}
 		wp_send_json_success( array(
-			'id'      => $wc_order->get_id(),
-			'number'  => $wc_order->get_order_number(),
+			'order'   => MMI_PO_Orders::wc_order_rows( array( $wc_order ) )[0],
 			'address' => MMI_PO_Address::from_wc_order( $wc_order ),
 			'lines'   => $lines,
+			// Sold items whose product has since been deleted: they cannot become catalog lines.
+			'missing' => array_values( $names ),
 		) );
 	}
 
