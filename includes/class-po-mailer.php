@@ -21,10 +21,13 @@ class MMI_PO_Mailer {
 
 	/**
 	 * Where the Send dialog can open the message as a draft instead of sending it from the site.
-	 * The compose link for each key is built in admin-po.js (MAIL_APPS); these are the names shown.
+	 * These are the names shown and logged; what each key does is in admin-po.js ("Own mail app").
+	 * Only 'app' (a draft file built here) and 'share' can carry the PDF: a link never can.
 	 */
 	const MAIL_APPS = array(
-		'app'        => 'Mail app on this computer (Mail, Outlook…)',
+		'app'        => 'Mail app (draft file, PDF attached)',
+		'share'      => 'Share sheet to Mail (PDF attached)',
+		'link'       => 'Mail app (link, nothing attached)',
 		'gmail'      => 'Gmail',
 		'outlook365' => 'Outlook on the web (work or school)',
 		'outlook'    => 'Outlook.com',
@@ -118,6 +121,65 @@ class MMI_PO_Mailer {
 	}
 
 	/**
+	 * The message as a draft file (.eml) with the PO's PDF, and the shipping label when asked,
+	 * attached: for the user's own mail app. X-Unsent (Outlook, Thunderbird) and
+	 * X-Uniform-Type-Identifier (Apple Mail) ask the app to open it for editing rather than as
+	 * received mail. There is no From header: the app sends from its own account.
+	 *
+	 * @return array|WP_Error {name: string, bytes: string}
+	 */
+	public static function draft_file( int $po_id, string $to, string $cc, string $subject, string $body, bool $attach_label = true, bool $no_cost_ok = false ) {
+		$ready = self::ready( $po_id, $to, $cc, $subject );
+		if ( is_wp_error( $ready ) ) {
+			return $ready;
+		}
+		$order = $ready['order'];
+		$costs = MMI_PO_Orders::check_costs( $order, $no_cost_ok, 'a draft email file' );
+		if ( is_wp_error( $costs ) ) {
+			return $costs;
+		}
+		$pdf = MMI_PO_Document::pdf( $order );
+		if ( is_wp_error( $pdf ) ) {
+			return $pdf;
+		}
+		$files = array( MMI_PO_Document::filename( $order ) => $pdf );
+		$label = self::label_to_attach( $order, $attach_label );
+		if ( $label ) {
+			$files[ sanitize_file_name( 'Shipping-Label-' . $order['po_number'] . '.pdf' ) ] = (string) file_get_contents( $label['path'] ); // audit-ok: one stored label PDF, a single page.
+		}
+
+		$eol      = "\r\n";
+		$boundary = 'mmi-po-' . wp_generate_password( 24, false );
+		$head     = array( 'MIME-Version: 1.0', 'X-Unsent: 1', 'X-Uniform-Type-Identifier: com.apple.mail-draft', 'To: ' . implode( ', ', $ready['to'] ) );
+		if ( $ready['cc'] ) {
+			$head[] = 'Cc: ' . implode( ', ', $ready['cc'] );
+		}
+		$head[] = 'Subject: ' . mb_encode_mimeheader( $ready['subject'], 'UTF-8', 'B', $eol );
+		$head[] = 'Content-Type: multipart/mixed; boundary="' . $boundary . '"';
+
+		$text  = preg_replace( '/\r\n|\r|\n/', $eol, $body );
+		$parts = '--' . $boundary . $eol . 'Content-Type: text/plain; charset=UTF-8' . $eol . 'Content-Transfer-Encoding: base64' . $eol . $eol . chunk_split( base64_encode( $text ) );
+		foreach ( $files as $name => $bytes ) {
+			$parts .= '--' . $boundary . $eol . 'Content-Type: application/pdf; name="' . $name . '"' . $eol . 'Content-Transfer-Encoding: base64' . $eol
+				. 'Content-Disposition: attachment; filename="' . $name . '"' . $eol . $eol . chunk_split( base64_encode( $bytes ) );
+		}
+
+		mmi_po_audit( 'export.download', array( 'object_type' => 'purchase_order', 'object_id' => $po_id, 'details' => array( 'draft_file' => true, 'label' => (bool) $label ) ) );
+		MMI_PO_Log::add( $po_id, 'pdf_exported', 'Draft email file downloaded for ' . implode( ', ', $ready['to'] ) . ( $label ? ', with shipping label' : '' ) );
+		return array(
+			'name'  => sanitize_file_name( $order['po_number'] . '.eml' ),
+			'bytes' => implode( $eol, $head ) . $eol . $eol . $parts . '--' . $boundary . '--' . $eol,
+		);
+	}
+
+	/** The PO's active prepaid label with the path of its stored PDF, when one should go with the email. */
+	private static function label_to_attach( array $order, bool $attach ): ?array {
+		$label = $attach && $order['label_mode'] === 'ours' ? MMI_PO_Shipping::active_label( (int) $order['id'] ) : null;
+		$path  = $label ? MMI_PO_Document::stored_path( $label['label_file'] ) : '';
+		return $path !== '' ? $label + array( 'path' => $path ) : null;
+	}
+
+	/**
 	 * @return array|WP_Error {to: string[], file: string} on success.
 	 */
 	public static function send( int $po_id, string $to, string $cc, string $subject, string $body, bool $attach_label = true, bool $no_cost_ok = false ) {
@@ -154,8 +216,8 @@ class MMI_PO_Mailer {
 		copy( $stored, $attach );
 
 		$attachments = array( $attach );
-		$label       = $attach_label && $order['label_mode'] === 'ours' ? MMI_PO_Shipping::active_label( $po_id ) : null;
-		$label_path  = $label ? MMI_PO_Document::stored_path( $label['label_file'] ) : '';
+		$label       = self::label_to_attach( $order, $attach_label );
+		$label_path  = $label ? $label['path'] : '';
 		if ( $label_path !== '' ) {
 			$label_copy = trailingslashit( get_temp_dir() ) . wp_unique_filename( get_temp_dir(), sanitize_file_name( 'Shipping-Label-' . $order['po_number'] . '.pdf' ) );
 			copy( $label_path, $label_copy );

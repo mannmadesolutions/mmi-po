@@ -268,12 +268,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 							<option value="<?php echo esc_attr( $mmi_po_key ); ?>"><?php echo esc_html( $mmi_po_label ); ?></option>
 						<?php endforeach; ?>
 					</select>
-					<a class="button" id="mmi-po-mailapp-open" href="#" rel="noopener"><span class="dashicons dashicons-external"></span> <?php esc_html_e( 'Open as a draft', 'mmi-po' ); ?></a>
+					<button type="button" class="button" id="mmi-po-mailapp-open"><span class="dashicons dashicons-external"></span> <?php esc_html_e( 'Open as a draft', 'mmi-po' ); ?></button>
 					<button type="button" class="button" id="mmi-po-mailapp-mark" hidden><span class="dashicons dashicons-yes"></span> <?php esc_html_e( 'I sent it: mark as emailed', 'mmi-po' ); ?></button>
 				</div>
-				<p class="mmi-hint-text"><?php esc_html_e( 'Opens the message above as a draft where you choose, so you can read it as it will arrive and send it from your own address. Your choice is remembered on this computer. A website cannot attach a file in another app, so the PO\'s PDF downloads at the same time for you to attach. After sending it there, come back and mark it as emailed: the site cannot see mail it did not send.', 'mmi-po' ); ?></p>
-				<p class="mmi-po-note" id="mmi-po-mailapp-label" hidden><?php esc_html_e( 'This PO has a prepaid shipping label. Attach it too:', 'mmi-po' ); ?> <a id="mmi-po-mailapp-label-link" target="_blank" rel="noopener"><?php esc_html_e( 'open the label PDF', 'mmi-po' ); ?></a></p>
-				<iframe id="mmi-po-mailapp-frame" title="<?php esc_attr_e( 'PDF download', 'mmi-po' ); ?>" hidden></iframe>
+				<p class="mmi-hint-text" id="mmi-po-mailapp-hint"></p>
+				<p class="mmi-hint-text"><?php esc_html_e( 'This lets you read the message as it will arrive and send it from your own address. Your choice is remembered on this computer. After sending it there, come back and mark it as emailed: the site cannot see mail it did not send.', 'mmi-po' ); ?></p>
 			</div>
 			</div>
 			<div class="mmi-modal-error" id="mmi-po-email-error" hidden></div>

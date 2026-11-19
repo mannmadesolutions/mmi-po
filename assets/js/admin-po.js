@@ -23,6 +23,10 @@
     const TIMING = {
         SEARCH_DEBOUNCE_MS: 400,
         MESSAGE_HIDE_MS: 6000,
+        /** How long a saved file's address is kept alive for the browser to start the download. */
+        FILE_URL_MS: 60000,
+        /** Pause between two files saved one after the other: Safari keeps only the last of a burst. */
+        FILE_GAP_MS: 700,
     };
 
     /** Marks a unit-cost input that is empty or zero, like a required field left blank. */
@@ -152,9 +156,8 @@
         MAILAPP_SELECT: '#mmi-po-mailapp-select',
         MAILAPP_OPEN: '#mmi-po-mailapp-open',
         MAILAPP_MARK: '#mmi-po-mailapp-mark',
-        MAILAPP_LABEL: '#mmi-po-mailapp-label',
-        MAILAPP_LABEL_LINK: '#mmi-po-mailapp-label-link',
-        MAILAPP_FRAME: '#mmi-po-mailapp-frame',
+        MAILAPP_SHARE_OPTION: '#mmi-po-mailapp-select option[value="share"]',
+        MAILAPP_HINT: '#mmi-po-mailapp-hint',
         COST_NOTE: '#mmi-po-cost-note',
         COST_MODAL: '#mmi-po-cost-modal',
         COST_INTRO: '#mmi-po-cost-intro',
@@ -191,6 +194,13 @@
         saved: 'Saved %number%.',
         sent: 'Emailed %number% to %to%.',
         markedEmailed: 'Marked %number% as emailed to %to%.',
+        mailFiles: 'the PO\'s PDF',
+        mailFilesWithLabel: 'the PO\'s PDF and the shipping label',
+        mailHintApp: 'Downloads a draft file with %files% attached. Open it and your mail app shows this message ready to send.',
+        mailHintShare: 'Opens the share sheet with %files%. Choose Mail and the message is filled in. Add the supplier\'s address there: a share sheet cannot carry one.',
+        mailHintLink: 'Opens a draft of this message. A link cannot carry a file: attach %files% yourself, from your downloads.',
+        shareAgain: 'The files are ready. Click "Open as a draft" once more to open the share sheet.',
+        fileError: 'The file could not be prepared. Try Download PDF to see why.',
         costNote: '%count% line(s) have no unit cost. Each needs one before this PO is emailed or downloaded.',
         costIntro: '%count% line(s) on this PO have no unit cost. Enter one for each before the PO leaves.',
         costStillMissing: '%count% line(s) still have no unit cost. Enter one, or tick the approval below the list.',
@@ -271,6 +281,8 @@
         SAVE_BUSY: '<span class="mmi-loading"></span> Saving…',
         SEND_IDLE: '<span class="dashicons dashicons-email-alt"></span> Send',
         SEND_BUSY: '<span class="mmi-loading"></span> Sending…',
+        OPEN_IDLE: '<span class="dashicons dashicons-external"></span> Open as a draft',
+        OPEN_BUSY: '<span class="mmi-loading"></span> Preparing…',
         MARK_IDLE: '<span class="dashicons dashicons-yes"></span> I sent it: mark as emailed',
         MARK_BUSY: '<span class="mmi-loading"></span> Marking…',
         SUPPLIER_IDLE: '<span class="dashicons dashicons-saved"></span> Save supplier',
@@ -339,17 +351,63 @@
     }
 
     /**
-     * Compose link per mail app, from a draft {to: [], cc: [], subject, body}. The keys match
-     * MMI_PO_Mailer::MAIL_APPS, which holds the names shown. No link like these can carry an
-     * attachment: that is a limit of browsers, so the PDF is downloaded beside it.
+     * Compose link per mail app that is reached by a link, from a draft {to: [], cc: [], subject,
+     * body}. The keys are among MMI_PO_Mailer::MAIL_APPS. No link can carry an attachment (a limit
+     * of browsers), which is why 'app' (a draft file) and 'share' (the share sheet) are not here.
      */
-    const MAIL_APPS = {
-        app: (d) => `mailto:${d.to.map(encodeURIComponent).join(',')}?${mailQuery({ cc: d.cc.join(','), subject: d.subject, body: d.body.replace(/\r?\n/g, '\r\n') })}`,
+    const MAIL_LINKS = {
+        link: (d) => `mailto:${d.to.map(encodeURIComponent).join(',')}?${mailQuery({ cc: d.cc.join(','), subject: d.subject, body: d.body.replace(/\r?\n/g, '\r\n') })}`,
         gmail: (d) => `https://mail.google.com/mail/?${mailQuery({ view: 'cm', fs: '1', to: d.to.join(','), cc: d.cc.join(','), su: d.subject, body: d.body })}`,
         outlook365: outlookCompose('https://outlook.office.com/mail/deeplink/compose'),
         outlook: outlookCompose('https://outlook.live.com/mail/0/deeplink/compose'),
         yahoo: (d) => `https://compose.mail.yahoo.com/?${mailQuery({ to: d.to.join(','), cc: d.cc.join(','), subject: d.subject, body: d.body })}`,
     };
+
+    /** What the hint under the mail-app choice says for the two that carry the files; the rest are links. */
+    const MAIL_HINTS = {
+        app: MESSAGES.mailHintApp,
+        share: MESSAGES.mailHintShare,
+    };
+
+    /**
+     * Fetches a generated file (the PO's PDF, a shipping label, a draft email) as a File named by
+     * the server. A refusal arrives as JSON from admin-ajax, or as an error page from admin-post.
+     */
+    function fetchFile(url, options) {
+        return fetch(url, Object.assign({ credentials: 'same-origin' }, options)).then((res) => {
+            if (/json/.test(res.headers.get('Content-Type') || '')) {
+                return res.json().then((json) => { throw (json && json.data && json.data.message) || MESSAGES.fileError; });
+            }
+            if (!res.ok) {
+                throw MESSAGES.fileError;
+            }
+            const named = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
+            return res.blob().then((blob) => new File([blob], named ? named[1] : 'purchase-order.pdf', { type: blob.type }));
+        });
+    }
+
+    /** Clicks a link the page never shows. Inside a click handler it counts as the user's own click, so nothing blocks it. */
+    function clickLink(attrs) {
+        const $link = $('<a>').attr(attrs).appendTo(document.body);
+        $link[0].click();
+        $link.remove();
+    }
+
+    /** Hands a fetched file to the browser's downloads. */
+    function saveFile(file) {
+        const url = URL.createObjectURL(file);
+        clickLink({ href: url, download: file.name });
+        setTimeout(() => URL.revokeObjectURL(url), TIMING.FILE_URL_MS);
+    }
+
+    /** Whether this browser can hand a PDF file to the share sheet. */
+    function canSharePdf() {
+        try {
+            return !!navigator.canShare && navigator.canShare({ files: [new File([''], 'po.pdf', { type: 'application/pdf' })] });
+        } catch (e) {
+            return false;
+        }
+    }
 
     function initSort(selector) {
         if (window.MMI_TableManager && $(selector).length) {
@@ -390,6 +448,9 @@
         /** While the unit-cost prompt is open: the line rows it lists, and what to do once it is answered. */
         costRows: [],
         costNext: null,
+        /** While the Send dialog is open: the PO's active label PDF, and files already fetched for the share sheet. */
+        mailLabelUrl: '',
+        shareFiles: null,
         rb: { carriers: null, results: {}, selected: 'all', rate: null, run: 0 },
 
         init() {
@@ -414,6 +475,9 @@
                 history: [],
             };
             this.renderSupplierOptions();
+            if (!canSharePdf()) {
+                $(SELECTORS.MAILAPP_SHARE_OPTION).remove();
+            }
             this.fill();
             this.bind();
             if (window.MMIModal) {
@@ -1084,7 +1148,7 @@
                         this.confirmCosts();
                     }
                 });
-            $([SELECTORS.EMAIL_TO, SELECTORS.EMAIL_CC, SELECTORS.EMAIL_SUBJECT, SELECTORS.EMAIL_BODY, SELECTORS.MAILAPP_SELECT].join(',')).on('input change', () => this.renderMailApp());
+            $([SELECTORS.MAILAPP_SELECT, SELECTORS.ATTACH_LABEL].join(',')).on('change', () => this.renderMailApp());
             $(SELECTORS.MAILAPP_OPEN).on('click', () => this.openMailApp());
             $(SELECTORS.MAILAPP_MARK).on('click', () => this.markEmailed());
             $(SELECTORS.EMAIL).on('click', () => this.openEmail());
@@ -1656,22 +1720,21 @@
             const $btn = $(SELECTORS.EMAIL_SEND);
             const $error = $(SELECTORS.EMAIL_ERROR).prop('hidden', true);
             setBusy($btn, true, LABELS.SEND_IDLE, LABELS.SEND_BUSY);
-            ajax('send', Object.assign(this.emailParams(), {
-                body: $(SELECTORS.EMAIL_BODY).val(),
-                attach_label: !$(SELECTORS.ATTACH_LABEL_WRAP).prop('hidden') && $(SELECTORS.ATTACH_LABEL).is(':checked') ? 1 : 0,
-            }))
+            ajax('send', this.emailParams())
                 .then((data) => this.afterEmailed(data, MESSAGES.sent))
                 .catch((msg) => $error.text(msg).prop('hidden', false))
                 .finally(() => setBusy($btn, false, LABELS.SEND_IDLE, LABELS.SEND_BUSY));
         },
 
-        /** What Send and "mark as emailed" both post from the dialog. */
+        /** The dialog as Send, the draft file and "mark as emailed" all post it. */
         emailParams() {
             return {
                 id: this.order.id,
                 to: $(SELECTORS.EMAIL_TO).val(),
                 cc: $(SELECTORS.EMAIL_CC).val(),
                 subject: $(SELECTORS.EMAIL_SUBJECT).val(),
+                body: $(SELECTORS.EMAIL_BODY).val(),
+                attach_label: this.attachLabel() ? 1 : 0,
                 remember: !$(SELECTORS.EMAIL_REMEMBER_WRAP).prop('hidden') && $(SELECTORS.EMAIL_REMEMBER).is(':checked') ? 1 : 0,
                 no_cost_ok: this.costApproved ? 1 : 0,
             };
@@ -1693,41 +1756,90 @@
             } catch (e) {
                 stored = ''; // Storage is blocked (private browsing): start from the first app.
             }
-            if (MAIL_APPS[stored]) {
-                $(SELECTORS.MAILAPP_SELECT).val(stored);
+            const $select = $(SELECTORS.MAILAPP_SELECT);
+            if ($select.find('option').get().some((option) => option.value === stored)) {
+                $select.val(stored);
             }
-            const labelUrl = label && label.label_url ? label.label_url : '';
-            $(SELECTORS.MAILAPP_LABEL).prop('hidden', labelUrl === '');
-            $(SELECTORS.MAILAPP_LABEL_LINK).attr('href', labelUrl || '#');
+            this.mailLabelUrl = label && label.label_url ? label.label_url : '';
             $(SELECTORS.MAILAPP_MARK).prop('hidden', true);
             $(SELECTORS.MAILAPP).prop('hidden', false);
             this.renderMailApp();
         },
 
-        /** Keeps the Open link a real link to the chosen app with the dialog's current text, so no popup blocker applies. */
-        renderMailApp() {
-            const app = $(SELECTORS.MAILAPP_SELECT).val();
-            const addresses = (selector) => $(selector).val().split(/[\s,;]+/).filter(Boolean);
-            $(SELECTORS.MAILAPP_OPEN)
-                .attr('href', MAIL_APPS[app]({
-                    to: addresses(SELECTORS.EMAIL_TO),
-                    cc: addresses(SELECTORS.EMAIL_CC),
-                    subject: $(SELECTORS.EMAIL_SUBJECT).val(),
-                    body: $(SELECTORS.EMAIL_BODY).val(),
-                }))
-                .attr('target', app === 'app' ? null : '_blank');
+        /** The dialog's own tick box decides whether the shipping label goes along, whichever way the email is sent. */
+        attachLabel() {
+            return !$(SELECTORS.ATTACH_LABEL_WRAP).prop('hidden') && $(SELECTORS.ATTACH_LABEL).is(':checked');
         },
 
-        /** Runs beside the link's own navigation. */
+        /** Says what the chosen app will do with the files, and drops any fetched for an earlier choice. */
+        renderMailApp() {
+            const files = this.attachLabel() && this.mailLabelUrl ? MESSAGES.mailFilesWithLabel : MESSAGES.mailFiles;
+            this.shareFiles = null;
+            $(SELECTORS.MAILAPP_HINT).text(fmt(MAIL_HINTS[$(SELECTORS.MAILAPP_SELECT).val()] || MESSAGES.mailHintLink, { files }));
+        },
+
+        mailDraft() {
+            const addresses = (selector) => $(selector).val().split(/[\s,;]+/).filter(Boolean);
+            return {
+                to: addresses(SELECTORS.EMAIL_TO),
+                cc: addresses(SELECTORS.EMAIL_CC),
+                subject: $(SELECTORS.EMAIL_SUBJECT).val(),
+                body: $(SELECTORS.EMAIL_BODY).val(),
+            };
+        },
+
+        /** The PO's PDF, and the shipping label when it is to go along, as files. */
+        attachmentFiles() {
+            const urls = [this.downloadUrl()].concat(this.attachLabel() && this.mailLabelUrl ? [this.mailLabelUrl] : []);
+            return Promise.all(urls.map((url) => fetchFile(url)));
+        },
+
         openMailApp() {
+            const app = $(SELECTORS.MAILAPP_SELECT).val();
             try {
-                window.localStorage.setItem(MAIL_APP_STORAGE_KEY, $(SELECTORS.MAILAPP_SELECT).val());
+                window.localStorage.setItem(MAIL_APP_STORAGE_KEY, app);
             } catch (e) {
                 // Storage is blocked: the choice just isn't remembered.
             }
-            // The link cannot carry the PDF, so it downloads for the user to attach.
-            $(SELECTORS.MAILAPP_FRAME).attr('src', this.downloadUrl());
-            $(SELECTORS.MAILAPP_MARK).prop('hidden', false);
+            $(SELECTORS.EMAIL_ERROR).prop('hidden', true);
+            if (MAIL_LINKS[app]) {
+                // Nothing can ride on a link, so the files are saved for attaching by hand.
+                clickLink({ href: MAIL_LINKS[app](this.mailDraft()), rel: 'noopener', target: app === 'link' ? null : '_blank' });
+                this.prepareDraft(this.attachmentFiles().then((files) => files.forEach((file, i) => setTimeout(() => saveFile(file), i * TIMING.FILE_GAP_MS))));
+            } else if (app === 'share') {
+                this.prepareDraft(this.shareDraft());
+            } else {
+                const body = new URLSearchParams(Object.assign({ action: 'mmi_po_draft_file', nonce: CFG.nonce }, this.emailParams()));
+                this.prepareDraft(fetchFile(CFG.ajaxUrl, { method: 'POST', body }).then(saveFile));
+            }
+        },
+
+        /** Shows the Open button busy while `work` runs, then offers "mark as emailed" (unless it resolves false) or says what went wrong. */
+        prepareDraft(work) {
+            const $btn = $(SELECTORS.MAILAPP_OPEN);
+            setBusy($btn, true, LABELS.OPEN_IDLE, LABELS.OPEN_BUSY);
+            work
+                .then((opened) => $(SELECTORS.MAILAPP_MARK).prop('hidden', opened === false))
+                .catch((err) => $(SELECTORS.EMAIL_ERROR).text(typeof err === 'string' ? err : MESSAGES.networkError).prop('hidden', false))
+                .finally(() => setBusy($btn, false, LABELS.OPEN_IDLE, LABELS.OPEN_BUSY));
+        },
+
+        /**
+         * A share sheet only opens inside a click. The first click has to fetch the files, and a
+         * browser may count that wait as the click having passed: the files are then kept, and the
+         * next click shares them at once. Resolves false when the user closes the sheet.
+         */
+        shareDraft() {
+            const draft = this.mailDraft();
+            const ready = this.shareFiles
+                ? Promise.resolve(this.shareFiles)
+                : this.attachmentFiles().then((files) => { this.shareFiles = files; return files; });
+            return ready.then((files) => navigator.share({ files, title: draft.subject, text: draft.body }).then(() => true, (err) => {
+                if (err && err.name === 'AbortError') {
+                    return false;
+                }
+                throw err && err.name === 'NotAllowedError' ? MESSAGES.shareAgain : err;
+            }));
         },
 
         markEmailed() {

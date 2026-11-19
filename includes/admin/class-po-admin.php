@@ -27,7 +27,7 @@ class MMI_PO_Admin {
 	/** Tabs that need the 'manage' capability (settings and credentials) rather than 'operate'. */
 	const MANAGE_TABS = array( 'settings' );
 
-	const AJAX_ACTIONS = array( 'search_products', 'save', 'set_status', 'duplicate', 'delete', 'email_draft', 'send', 'mark_emailed', 'save_supplier', 'search_wc_orders', 'load_wc_order', 'rate_carriers', 'rates', 'buy_label', 'void_label', 'resolve_label', 'ss_carriers' );
+	const AJAX_ACTIONS = array( 'search_products', 'save', 'set_status', 'duplicate', 'delete', 'email_draft', 'send', 'draft_file', 'mark_emailed', 'save_supplier', 'search_wc_orders', 'load_wc_order', 'rate_carriers', 'rates', 'buy_label', 'void_label', 'resolve_label', 'ss_carriers' );
 
 	public static function init(): void {
 		add_action( 'admin_menu', array( __CLASS__, 'register_submenu' ) );
@@ -220,6 +220,30 @@ class MMI_PO_Admin {
 			! empty( $_POST['attach_label'] ),
 			! empty( $_POST['no_cost_ok'] )
 		) );
+	}
+
+	/** The message as a draft file with the PDF attached, for the user's own mail app. Errors come back as JSON. */
+	public static function ajax_draft_file(): void {
+		self::guard();
+		$file = MMI_PO_Mailer::draft_file(
+			absint( $_POST['id'] ?? 0 ),
+			sanitize_text_field( wp_unslash( $_POST['to'] ?? '' ) ),
+			sanitize_text_field( wp_unslash( $_POST['cc'] ?? '' ) ),
+			sanitize_text_field( wp_unslash( $_POST['subject'] ?? '' ) ),
+			sanitize_textarea_field( wp_unslash( $_POST['body'] ?? '' ) ),
+			! empty( $_POST['attach_label'] ),
+			! empty( $_POST['no_cost_ok'] )
+		);
+		if ( is_wp_error( $file ) ) {
+			wp_send_json_error( array( 'message' => $file->get_error_message() ), 400 );
+		}
+		nocache_headers();
+		header( 'Content-Type: message/rfc822' );
+		header( 'Content-Disposition: attachment; filename="' . $file['name'] . '"' );
+		header( 'Content-Length: ' . strlen( $file['bytes'] ) );
+		header( 'X-Content-Type-Options: nosniff' );
+		echo $file['bytes']; // phpcs:ignore WordPress.Security.EscapeOutput -- a MIME message built in MMI_PO_Mailer::draft_file().
+		exit;
 	}
 
 	/** The user sent the PO from their own mail app and says so: record it, send nothing. */
