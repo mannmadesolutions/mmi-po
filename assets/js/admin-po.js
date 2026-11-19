@@ -501,23 +501,26 @@
             if (!row) {
                 return;
             }
-            const requestId = ++this.orderXhr;
+            // Drop any search still queued or in flight: its results would reopen the list.
+            clearTimeout(this.orderTimer);
+            this.orderXhr++;
+            const $search = $(SELECTORS.ORDER_SEARCH).val('').trigger('blur');
+            const $spinner = $(SELECTORS.ORDER_SPINNER).prop('hidden', true);
             $(SELECTORS.ORDER_RESULTS).prop('hidden', true);
-            $(SELECTORS.ORDER_SEARCH).val('').trigger('blur');
             if (this.picked && this.picked.order.id === row.id) {
                 // Loading it twice would double every quantity.
-                $(SELECTORS.ORDER_SPINNER).prop('hidden', true);
                 this.message(fmt(MESSAGES.orderAlready, { number: row.number }), 'warning');
                 return;
             }
-            $(SELECTORS.ORDER_SPINNER).prop('hidden', false);
+            // The box stays off until this order has landed, so two picks can never arrive out of order.
+            $search.prop('disabled', true);
+            $spinner.prop('hidden', false);
             ajax('load_wc_order', { order: row.id })
                 .then((data) => this.applyPickedOrder(data))
                 .catch((msg) => this.message(msg, 'error'))
                 .finally(() => {
-                    if (requestId === this.orderXhr) {
-                        $(SELECTORS.ORDER_SPINNER).prop('hidden', true);
-                    }
+                    $search.prop('disabled', false);
+                    $spinner.prop('hidden', true);
                 });
         },
 
