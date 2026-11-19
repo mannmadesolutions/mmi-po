@@ -27,7 +27,7 @@ class MMI_PO_Admin {
 	/** Tabs that need the 'manage' capability (settings and credentials) rather than 'operate'. */
 	const MANAGE_TABS = array( 'settings' );
 
-	const AJAX_ACTIONS = array( 'search_products', 'save', 'set_status', 'duplicate', 'delete', 'email_draft', 'send', 'save_supplier', 'search_wc_orders', 'load_wc_order', 'rate_carriers', 'rates', 'buy_label', 'void_label', 'resolve_label', 'ss_carriers' );
+	const AJAX_ACTIONS = array( 'search_products', 'save', 'set_status', 'duplicate', 'delete', 'email_draft', 'send', 'mark_emailed', 'save_supplier', 'search_wc_orders', 'load_wc_order', 'rate_carriers', 'rates', 'buy_label', 'void_label', 'resolve_label', 'ss_carriers' );
 
 	public static function init(): void {
 		add_action( 'admin_menu', array( __CLASS__, 'register_submenu' ) );
@@ -210,20 +210,39 @@ class MMI_PO_Admin {
 
 	public static function ajax_send(): void {
 		self::guard();
-		$id     = absint( $_POST['id'] ?? 0 );
-		$result = MMI_PO_Mailer::send(
+		$id = absint( $_POST['id'] ?? 0 );
+		self::respond_emailed( $id, MMI_PO_Mailer::send(
 			$id,
 			sanitize_text_field( wp_unslash( $_POST['to'] ?? '' ) ),
 			sanitize_text_field( wp_unslash( $_POST['cc'] ?? '' ) ),
 			sanitize_text_field( wp_unslash( $_POST['subject'] ?? '' ) ),
 			sanitize_textarea_field( wp_unslash( $_POST['body'] ?? '' ) ),
-			! empty( $_POST['attach_label'] )
-		);
+			! empty( $_POST['attach_label'] ),
+			! empty( $_POST['no_cost_ok'] )
+		) );
+	}
+
+	/** The user sent the PO from their own mail app and says so: record it, send nothing. */
+	public static function ajax_mark_emailed(): void {
+		self::guard();
+		$id = absint( $_POST['id'] ?? 0 );
+		self::respond_emailed( $id, MMI_PO_Mailer::record_own_send(
+			$id,
+			sanitize_text_field( wp_unslash( $_POST['to'] ?? '' ) ),
+			sanitize_text_field( wp_unslash( $_POST['cc'] ?? '' ) ),
+			sanitize_text_field( wp_unslash( $_POST['subject'] ?? '' ) ),
+			sanitize_key( wp_unslash( $_POST['app'] ?? '' ) ),
+			! empty( $_POST['no_cost_ok'] )
+		) );
+	}
+
+	/** @param array|WP_Error $result From either way of emailing a PO. */
+	private static function respond_emailed( int $id, $result ): void {
 		if ( is_wp_error( $result ) ) {
 			wp_send_json_error( array( 'message' => $result->get_error_message() ), 400 );
 		}
-		if ( ! empty( $_POST['remember'] ) ) {
-			self::remember_supplier_email( $id, sanitize_text_field( wp_unslash( $_POST['to'] ?? '' ) ) );
+		if ( ! empty( $_POST['remember'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification -- both callers ran guard().
+			self::remember_supplier_email( $id, sanitize_text_field( wp_unslash( $_POST['to'] ?? '' ) ) ); // phpcs:ignore WordPress.Security.NonceVerification
 		}
 		self::respond_order( $id );
 	}
@@ -386,11 +405,16 @@ class MMI_PO_Admin {
 		if ( ! $order ) {
 			wp_die( esc_html__( 'That purchase order no longer exists.', 'mmi-po' ) );
 		}
+		// Looking at the PDF is always allowed; taking a copy away goes through the unit-cost gate.
+		$download = ! empty( $_GET['download'] );
+		$costs    = $download ? MMI_PO_Orders::check_costs( $order, ! empty( $_GET['nocost'] ), 'PDF download' ) : true;
+		if ( is_wp_error( $costs ) ) {
+			wp_die( esc_html( $costs->get_error_message() ), '', array( 'response' => 409, 'back_link' => true ) );
+		}
 		$bytes = MMI_PO_Document::pdf( $order );
 		if ( is_wp_error( $bytes ) ) {
 			wp_die( esc_html( $bytes->get_error_message() ) );
 		}
-		$download = ! empty( $_GET['download'] );
 		if ( $download ) {
 			MMI_PO_Log::add( (int) $order['id'], 'pdf_exported', 'PDF downloaded' );
 			mmi_po_audit( 'export.download', array( 'object_type' => 'purchase_order', 'object_id' => (int) $order['id'] ) );

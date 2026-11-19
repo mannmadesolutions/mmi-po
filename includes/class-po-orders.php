@@ -131,6 +131,43 @@ class MMI_PO_Orders {
 		return $rows;
 	}
 
+	/** Lines that would reach the supplier with no price on them: unit cost empty or zero. */
+	public static function lines_without_cost( array $order ): array {
+		return array_values( array_filter( $order['items'], static function ( $item ) {
+			return (float) $item['unit_cost'] <= 0;
+		} ) );
+	}
+
+	/**
+	 * The unit-cost gate shared by every way a PO leaves (email, marked as emailed, PDF download).
+	 * A PO with a line that has no unit cost only goes when a manager approves that exit, and
+	 * the approval is recorded on the PO.
+	 *
+	 * @param string $leaving What the PO is about to do, for the record ("email", "PDF download").
+	 * @return true|WP_Error
+	 */
+	public static function check_costs( array $order, bool $approved, string $leaving ) {
+		$missing = self::lines_without_cost( $order );
+		if ( ! $missing ) {
+			return true;
+		}
+		$count = count( $missing );
+		$names = implode( ', ', array_map( static function ( $item ) {
+			return $item['item_number'] !== '' ? $item['item_number'] : wp_html_excerpt( (string) $item['description'], 40, '…' );
+		}, $missing ) );
+		if ( ! $approved ) {
+			return new WP_Error( 'mmi_po_no_cost', sprintf( /* translators: 1: line count, 2: item numbers */ _n( '%1$d line has no unit cost (%2$s). Enter a cost, or have a manager approve this PO without one.', '%1$d lines have no unit cost (%2$s). Enter a cost on each, or have a manager approve this PO without them.', $count, 'mmi-po' ), $count, $names ) );
+		}
+		$audit = array( 'object_type' => 'purchase_order', 'object_id' => (int) $order['id'], 'details' => array( 'lines' => $count, 'leaving' => $leaving ) );
+		if ( ! mmi_po_user_can( 'manage' ) ) {
+			mmi_po_audit( 'po.cost_override', array_merge( $audit, array( 'outcome' => 'denied' ) ) );
+			return new WP_Error( 'mmi_po_no_cost_cap', __( 'Only a manager can approve a purchase order with no unit cost. Enter a cost on every line.', 'mmi-po' ) );
+		}
+		mmi_po_audit( 'po.cost_override', $audit );
+		MMI_PO_Log::add( (int) $order['id'], 'cost_override', sprintf( 'No unit cost on %d line(s) (%s); approved for %s', $count, $names, $leaving ) );
+		return true;
+	}
+
 	/** First free PO number at $base, $base-2, $base-3 … */
 	public static function free_number( string $base ): string {
 		global $wpdb;

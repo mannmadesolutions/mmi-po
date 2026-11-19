@@ -145,6 +145,17 @@
 .mmi-po-lines input,
 .mmi-po-lines textarea { width: 100%; }
 .mmi-po-lines textarea { resize: vertical; min-height: 30px; }
+/* A line with no unit cost: marked like a required field left empty. */
+.mmi-po-lines input.mmi-po-cost-missing,
+.mmi-po-cost-table input.mmi-po-cost-missing { border-color: var(--mmi-warning); box-shadow: 0 0 0 1px var(--mmi-warning); }
+.mmi-po-cost-table input { width: 100%; text-align: right; }
+.mmi-po-cost-approve { margin-top: var(--mmi-space-md); }
+
+/* Send dialog: open the message in the user's own mail instead */
+.mmi-po-mailapp { margin-top: var(--mmi-space-md); padding-top: var(--mmi-space-md); border-top: 1px solid var(--mmi-border-light); }
+#mmi-po-mailapp-mark[hidden] { display: none; }
+.mmi-po-mailapp .mmi-toolbar { margin: 0; }
+.mmi-po-mailapp select { width: auto; }
 .mmi-po-lines .mmi-po-col-money input,
 .mmi-po-lines .mmi-po-col-qty input { text-align: right; }
 .mmi-po-amount { font-weight: var(--mmi-font-weight-semibold); vertical-align: middle; }

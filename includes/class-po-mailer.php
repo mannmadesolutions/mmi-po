@@ -19,6 +19,18 @@ class MMI_PO_Mailer {
 	const MAX_SENDS_PER_HOUR = 30;
 	const SEND_COUNT_PREFIX  = 'mmi_po_sends_';
 
+	/**
+	 * Where the Send dialog can open the message as a draft instead of sending it from the site.
+	 * The compose link for each key is built in admin-po.js (MAIL_APPS); these are the names shown.
+	 */
+	const MAIL_APPS = array(
+		'app'        => 'Mail app on this computer (Mail, Outlook…)',
+		'gmail'      => 'Gmail',
+		'outlook365' => 'Outlook on the web (work or school)',
+		'outlook'    => 'Outlook.com',
+		'yahoo'      => 'Yahoo Mail',
+	);
+
 	/** Prefilled Send dialog for a PO. */
 	public static function draft( array $order ): array {
 		$supplier = MMI_PO_Orders::supplier_for( $order );
@@ -40,9 +52,11 @@ class MMI_PO_Mailer {
 	}
 
 	/**
-	 * @return array|WP_Error {to: string[], file: string} on success.
+	 * What both ways of emailing a PO check first: the PO and its lines, the recipients, the subject.
+	 *
+	 * @return array|WP_Error {order: array, to: string[], cc: string[], subject: string}
 	 */
-	public static function send( int $po_id, string $to, string $cc, string $subject, string $body, bool $attach_label = true ) {
+	private static function ready( int $po_id, string $to, string $cc, string $subject ) {
 		$order = MMI_PO_Orders::get( $po_id );
 		if ( ! $order ) {
 			return new WP_Error( 'mmi_po_missing', __( 'That purchase order no longer exists.', 'mmi-po' ) );
@@ -67,11 +81,63 @@ class MMI_PO_Mailer {
 		if ( $subject === '' ) {
 			return new WP_Error( 'mmi_po_subject', __( 'Enter a subject.', 'mmi-po' ) );
 		}
+		return array( 'order' => $order, 'to' => $to_list, 'cc' => $cc_list, 'subject' => $subject );
+	}
+
+	/**
+	 * Records a PO the user emailed from their own mail app or webmail. Nothing is sent from
+	 * here and the site cannot see that message: the user says it went. The PDF as the PO
+	 * stands now is archived as the copy on record.
+	 *
+	 * @return array|WP_Error {to: string[], file: string} on success.
+	 */
+	public static function record_own_send( int $po_id, string $to, string $cc, string $subject, string $app, bool $no_cost_ok = false ) {
+		$ready = self::ready( $po_id, $to, $cc, $subject );
+		if ( is_wp_error( $ready ) ) {
+			return $ready;
+		}
+		$order = $ready['order'];
+		$app   = self::MAIL_APPS[ $app ] ?? self::MAIL_APPS['app'];
+		$costs = MMI_PO_Orders::check_costs( $order, $no_cost_ok, 'an email from ' . $app );
+		if ( is_wp_error( $costs ) ) {
+			return $costs;
+		}
+		$bytes = MMI_PO_Document::pdf( $order );
+		if ( is_wp_error( $bytes ) ) {
+			return $bytes;
+		}
+		$stored = MMI_PO_Document::store( $order, $bytes );
+		if ( is_wp_error( $stored ) ) {
+			return $stored;
+		}
+		$file = basename( $stored );
+		mmi_po_audit( 'po.email', array( 'object_type' => 'purchase_order', 'object_id' => $po_id, 'details' => array( 'to' => $ready['to'], 'cc' => $ready['cc'], 'own_mail' => $app ) ) );
+		MMI_PO_Orders::mark_sent( $po_id, array_merge( $ready['to'], $ready['cc'] ) );
+		MMI_PO_Log::add( $po_id, 'emailed_own', sprintf( 'Marked as sent to %s from %s. The PDF kept here is the PO as it stood when marked, not a copy of that email.', implode( ', ', $ready['to'] ), $app ), array( 'to' => $ready['to'], 'cc' => $ready['cc'], 'subject' => $ready['subject'], 'file' => $file ) );
+		return array( 'to' => $ready['to'], 'file' => $file );
+	}
+
+	/**
+	 * @return array|WP_Error {to: string[], file: string} on success.
+	 */
+	public static function send( int $po_id, string $to, string $cc, string $subject, string $body, bool $attach_label = true, bool $no_cost_ok = false ) {
+		$ready = self::ready( $po_id, $to, $cc, $subject );
+		if ( is_wp_error( $ready ) ) {
+			return $ready;
+		}
+		$order   = $ready['order'];
+		$to_list = $ready['to'];
+		$cc_list = $ready['cc'];
+		$subject = $ready['subject'];
 		$count_key = self::SEND_COUNT_PREFIX . get_current_user_id();
 		$sends     = (int) get_transient( $count_key );
 		if ( $sends >= self::MAX_SENDS_PER_HOUR ) {
 			mmi_po_audit( 'po.email', array( 'object_type' => 'purchase_order', 'object_id' => $po_id, 'outcome' => 'denied', 'details' => array( 'reason' => 'rate_limit' ) ) );
 			return new WP_Error( 'mmi_po_rate', sprintf( /* translators: %d: limit */ __( 'You have sent %d purchase order emails in the last hour. Wait a while before sending more.', 'mmi-po' ), self::MAX_SENDS_PER_HOUR ) );
+		}
+		$costs = MMI_PO_Orders::check_costs( $order, $no_cost_ok, 'email' );
+		if ( is_wp_error( $costs ) ) {
+			return $costs;
 		}
 
 		$bytes = MMI_PO_Document::pdf( $order );

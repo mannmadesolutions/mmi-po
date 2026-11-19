@@ -19,6 +19,8 @@ class MMI_PO_Log {
 		'pdf_exported'   => 'PDF exported',
 		'emailed'        => 'Emailed',
 		'email_failed'   => 'Email failed',
+		'emailed_own'    => 'Emailed from own mail',
+		'cost_override'  => 'No unit cost approved',
 		'status_changed' => 'Status changed',
 		'deleted'        => 'Deleted',
 		'label_bought'   => 'Label bought',

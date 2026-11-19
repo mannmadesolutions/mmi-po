@@ -146,6 +146,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 				</table>
 			</div>
 			<p class="mmi-po-empty" id="mmi-po-lines-empty"><?php esc_html_e( 'No lines yet. Search above to add products, or add a blank line for anything not in the catalog.', 'mmi-po' ); ?></p>
+			<p class="mmi-po-note" id="mmi-po-cost-note" hidden></p>
 			<button type="button" class="button" id="mmi-po-add-line"><span class="dashicons dashicons-plus"></span> <?php esc_html_e( 'Add blank line', 'mmi-po' ); ?></button>
 
 			<table class="mmi-po-totals">
@@ -258,11 +259,63 @@ if ( ! defined( 'ABSPATH' ) ) {
 				<textarea id="mmi-po-email-body" rows="9"></textarea>
 			</div>
 			<label class="mmi-po-inline" id="mmi-po-attach-label-wrap" hidden><input type="checkbox" id="mmi-po-attach-label" checked> <span id="mmi-po-attach-label-text"></span></label>
+			<div class="mmi-po-mailapp" id="mmi-po-mailapp" hidden>
+			<div class="mmi-po-field">
+				<label for="mmi-po-mailapp-select"><?php esc_html_e( 'Or preview and send it from your own mail', 'mmi-po' ); ?></label>
+				<div class="mmi-toolbar">
+					<select id="mmi-po-mailapp-select">
+						<?php foreach ( MMI_PO_Mailer::MAIL_APPS as $mmi_po_key => $mmi_po_label ) : ?>
+							<option value="<?php echo esc_attr( $mmi_po_key ); ?>"><?php echo esc_html( $mmi_po_label ); ?></option>
+						<?php endforeach; ?>
+					</select>
+					<a class="button" id="mmi-po-mailapp-open" href="#" rel="noopener"><span class="dashicons dashicons-external"></span> <?php esc_html_e( 'Open as a draft', 'mmi-po' ); ?></a>
+					<button type="button" class="button" id="mmi-po-mailapp-mark" hidden><span class="dashicons dashicons-yes"></span> <?php esc_html_e( 'I sent it: mark as emailed', 'mmi-po' ); ?></button>
+				</div>
+				<p class="mmi-hint-text"><?php esc_html_e( 'Opens the message above as a draft where you choose, so you can read it as it will arrive and send it from your own address. Your choice is remembered on this computer. A website cannot attach a file in another app, so the PO\'s PDF downloads at the same time for you to attach. After sending it there, come back and mark it as emailed: the site cannot see mail it did not send.', 'mmi-po' ); ?></p>
+				<p class="mmi-po-note" id="mmi-po-mailapp-label" hidden><?php esc_html_e( 'This PO has a prepaid shipping label. Attach it too:', 'mmi-po' ); ?> <a id="mmi-po-mailapp-label-link" target="_blank" rel="noopener"><?php esc_html_e( 'open the label PDF', 'mmi-po' ); ?></a></p>
+				<iframe id="mmi-po-mailapp-frame" title="<?php esc_attr_e( 'PDF download', 'mmi-po' ); ?>" hidden></iframe>
+			</div>
+			</div>
 			<div class="mmi-modal-error" id="mmi-po-email-error" hidden></div>
 		</div>
 		<div class="mmi-modal-footer">
 			<button type="button" class="button" data-close><?php esc_html_e( 'Cancel', 'mmi-po' ); ?></button>
 			<button type="button" class="button button-primary" id="mmi-po-email-send"><span class="dashicons dashicons-email-alt"></span> <?php esc_html_e( 'Send', 'mmi-po' ); ?></button>
+		</div>
+	</div>
+</div>
+
+<div class="mmi-modal-backdrop" id="mmi-po-cost-modal" hidden role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="mmi-po-cost-title">
+	<div class="mmi-modal mmi-modal--large">
+		<div class="mmi-modal-header">
+			<h3 id="mmi-po-cost-title"><?php esc_html_e( 'Unit cost missing', 'mmi-po' ); ?></h3>
+			<button type="button" class="mmi-modal-close" data-close aria-label="<?php esc_attr_e( 'Close', 'mmi-po' ); ?>">&times;</button>
+		</div>
+		<div class="mmi-modal-body">
+			<p id="mmi-po-cost-intro"></p>
+			<div class="mmi-table-scroll-wrapper">
+				<table class="widefat striped mmi-po-table mmi-po-cost-table">
+					<thead>
+						<tr>
+							<th class="mmi-po-col-item"><?php esc_html_e( 'Item #', 'mmi-po' ); ?></th>
+							<th><?php esc_html_e( 'Description', 'mmi-po' ); ?></th>
+							<th class="mmi-po-col-qty"><?php esc_html_e( 'Qty', 'mmi-po' ); ?></th>
+							<th class="mmi-po-col-money"><?php esc_html_e( 'Unit cost', 'mmi-po' ); ?></th>
+						</tr>
+					</thead>
+					<tbody id="mmi-po-cost-body"></tbody>
+				</table>
+			</div>
+			<?php if ( mmi_po_user_can( 'manage' ) ) : ?>
+				<label class="mmi-po-inline mmi-po-cost-approve"><input type="checkbox" id="mmi-po-cost-approve"> <?php esc_html_e( 'Approve this PO with no unit cost on the lines I leave blank. The approval is recorded in the PO\'s history under my name.', 'mmi-po' ); ?></label>
+			<?php else : ?>
+				<p class="mmi-po-note"><?php esc_html_e( 'Only a manager can approve a purchase order with no unit cost. Enter a cost on every line to go on.', 'mmi-po' ); ?></p>
+			<?php endif; ?>
+			<div class="mmi-modal-error" id="mmi-po-cost-error" hidden></div>
+		</div>
+		<div class="mmi-modal-footer">
+			<button type="button" class="button" data-close><?php esc_html_e( 'Cancel', 'mmi-po' ); ?></button>
+			<button type="button" class="button button-primary" id="mmi-po-cost-continue"><span class="dashicons dashicons-yes"></span> <?php esc_html_e( 'Continue', 'mmi-po' ); ?></button>
 		</div>
 	</div>
 </div>

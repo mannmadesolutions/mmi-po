@@ -25,6 +25,12 @@
         MESSAGE_HIDE_MS: 6000,
     };
 
+    /** Marks a unit-cost input that is empty or zero, like a required field left blank. */
+    const COST_MISSING_CLASS = 'mmi-po-cost-missing';
+
+    /** Remembers the mail app last used from the Send dialog. Per browser, as the installed apps are. */
+    const MAIL_APP_STORAGE_KEY = 'mmiPoMailApp';
+
     const STATUS_BADGES = {
         draft: 'warning',
         sent: 'info',
@@ -142,6 +148,20 @@
         EMAIL_SEND: '#mmi-po-email-send',
         EMAIL_REMEMBER: '#mmi-po-email-remember',
         EMAIL_REMEMBER_WRAP: '#mmi-po-remember-wrap',
+        MAILAPP: '#mmi-po-mailapp',
+        MAILAPP_SELECT: '#mmi-po-mailapp-select',
+        MAILAPP_OPEN: '#mmi-po-mailapp-open',
+        MAILAPP_MARK: '#mmi-po-mailapp-mark',
+        MAILAPP_LABEL: '#mmi-po-mailapp-label',
+        MAILAPP_LABEL_LINK: '#mmi-po-mailapp-label-link',
+        MAILAPP_FRAME: '#mmi-po-mailapp-frame',
+        COST_NOTE: '#mmi-po-cost-note',
+        COST_MODAL: '#mmi-po-cost-modal',
+        COST_INTRO: '#mmi-po-cost-intro',
+        COST_BODY: '#mmi-po-cost-body',
+        COST_APPROVE: '#mmi-po-cost-approve',
+        COST_ERROR: '#mmi-po-cost-error',
+        COST_CONTINUE: '#mmi-po-cost-continue',
         // Suppliers
         SUPPLIERS_BODY: '#mmi-po-suppliers-body',
         SUPPLIERS_TABLE: '#mmi-po-suppliers',
@@ -170,6 +190,11 @@
     const MESSAGES = {
         saved: 'Saved %number%.',
         sent: 'Emailed %number% to %to%.',
+        markedEmailed: 'Marked %number% as emailed to %to%.',
+        costNote: '%count% line(s) have no unit cost. Each needs one before this PO is emailed or downloaded.',
+        costIntro: '%count% line(s) on this PO have no unit cost. Enter one for each before the PO leaves.',
+        costStillMissing: '%count% line(s) still have no unit cost. Enter one, or tick the approval below the list.',
+        costNeedAll: '%count% line(s) still have no unit cost. Enter one on every line.',
         statusChanged: 'Status set to %status%.',
         networkError: 'The request failed. Check your connection and try again.',
         confirmDelete: 'Delete draft %number%? This cannot be undone.',
@@ -246,6 +271,8 @@
         SAVE_BUSY: '<span class="mmi-loading"></span> Saving…',
         SEND_IDLE: '<span class="dashicons dashicons-email-alt"></span> Send',
         SEND_BUSY: '<span class="mmi-loading"></span> Sending…',
+        MARK_IDLE: '<span class="dashicons dashicons-yes"></span> I sent it: mark as emailed',
+        MARK_BUSY: '<span class="mmi-loading"></span> Marking…',
         SUPPLIER_IDLE: '<span class="dashicons dashicons-saved"></span> Save supplier',
         RB_BUY_BUSY: '<span class="mmi-loading"></span> Buying…',
         TEST_IDLE: '<span class="dashicons dashicons-yes-alt"></span> Test connection',
@@ -298,6 +325,32 @@
         $button.prop('disabled', busy).toggleClass('mmi-is-loading', busy).html(busy ? busyHtml : idleHtml);
     }
 
+    /** A URL query from the non-empty values of `params`. Spaces become %20, which every mail service reads. */
+    function mailQuery(params) {
+        return Object.keys(params)
+            .filter((key) => params[key] !== '')
+            .map((key) => `${key}=${encodeURIComponent(params[key])}`)
+            .join('&');
+    }
+
+    /** Outlook's two web addresses take the same compose link; it wants ; between addresses. */
+    function outlookCompose(base) {
+        return (d) => `${base}?${mailQuery({ to: d.to.join(';'), cc: d.cc.join(';'), subject: d.subject, body: d.body })}`;
+    }
+
+    /**
+     * Compose link per mail app, from a draft {to: [], cc: [], subject, body}. The keys match
+     * MMI_PO_Mailer::MAIL_APPS, which holds the names shown. No link like these can carry an
+     * attachment: that is a limit of browsers, so the PDF is downloaded beside it.
+     */
+    const MAIL_APPS = {
+        app: (d) => `mailto:${d.to.map(encodeURIComponent).join(',')}?${mailQuery({ cc: d.cc.join(','), subject: d.subject, body: d.body.replace(/\r?\n/g, '\r\n') })}`,
+        gmail: (d) => `https://mail.google.com/mail/?${mailQuery({ view: 'cm', fs: '1', to: d.to.join(','), cc: d.cc.join(','), su: d.subject, body: d.body })}`,
+        outlook365: outlookCompose('https://outlook.office.com/mail/deeplink/compose'),
+        outlook: outlookCompose('https://outlook.live.com/mail/0/deeplink/compose'),
+        yahoo: (d) => `https://compose.mail.yahoo.com/?${mailQuery({ to: d.to.join(','), cc: d.cc.join(','), subject: d.subject, body: d.body })}`,
+    };
+
     function initSort(selector) {
         if (window.MMI_TableManager && $(selector).length) {
             window.MMI_TableManager.initDomSort(selector);
@@ -332,6 +385,11 @@
         picked: null,
         /** The PO number the picker filled in, so picking another order may replace it but never a typed one. */
         pickedNumber: '',
+        /** A manager approved the lines with no unit cost; withdrawn by the next change to the PO. */
+        costApproved: false,
+        /** While the unit-cost prompt is open: the line rows it lists, and what to do once it is answered. */
+        costRows: [],
+        costNext: null,
         rb: { carriers: null, results: {}, selected: 'all', rate: null, run: 0 },
 
         init() {
@@ -1016,7 +1074,19 @@
 
             $(SELECTORS.SAVE).on('click', () => this.save().catch(() => {}));
             $(SELECTORS.PREVIEW).on('click', () => this.openPdf(false));
-            $(SELECTORS.DOWNLOAD).on('click', () => this.openPdf(true));
+            $(SELECTORS.DOWNLOAD).on('click', () => this.requireCosts(() => this.openPdf(true)));
+            $(SELECTORS.COST_CONTINUE).on('click', () => this.confirmCosts());
+            $(SELECTORS.COST_BODY)
+                .on('input', 'input', function () { $(this).toggleClass(COST_MISSING_CLASS, num(this.value) <= 0); })
+                .on('keydown', 'input', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        this.confirmCosts();
+                    }
+                });
+            $([SELECTORS.EMAIL_TO, SELECTORS.EMAIL_CC, SELECTORS.EMAIL_SUBJECT, SELECTORS.EMAIL_BODY, SELECTORS.MAILAPP_SELECT].join(',')).on('input change', () => this.renderMailApp());
+            $(SELECTORS.MAILAPP_OPEN).on('click', () => this.openMailApp());
+            $(SELECTORS.MAILAPP_MARK).on('click', () => this.markEmailed());
             $(SELECTORS.EMAIL).on('click', () => this.openEmail());
             $(SELECTORS.EMAIL_SEND).on('click', () => this.send());
             $(SELECTORS.STATUS_SELECT).on('change', () => this.changeStatus());
@@ -1257,8 +1327,80 @@
             $(SELECTORS.SUBTOTAL).text(money(subtotal));
             $(SELECTORS.TOTAL).text(money(total));
             $(SELECTORS.LINES_EMPTY).prop('hidden', items.length > 0);
+            const $missing = this.linesWithoutCost();
+            $(SELECTORS.LINES_BODY).find('[data-field="unit_cost"]').removeClass(COST_MISSING_CLASS);
+            $missing.forEach(($row) => $row.find('[data-field="unit_cost"]').addClass(COST_MISSING_CLASS));
+            $(SELECTORS.COST_NOTE).text(fmt(MESSAGES.costNote, { count: $missing.length })).prop('hidden', $missing.length === 0);
             this.renderContents();
             $(SELECTORS.LINES_WRAP).prop('hidden', items.length === 0);
+        },
+
+        /* Unit cost gate */
+
+        /** Lines the server would keep (an item number or a description) that have no unit cost. */
+        linesWithoutCost() {
+            return $(SELECTORS.LINES_BODY).find(SELECTORS.LINE).get().map((row) => $(row)).filter(($row) =>
+                num($row.find('[data-field="unit_cost"]').val()) <= 0
+                && `${$row.find('[data-field="item_number"]').val()}${$row.find('[data-field="description"]').val()}`.trim() !== '');
+        },
+
+        /**
+         * Runs `next` (an email or a PDF download) once every line has a unit cost, or a manager
+         * has approved the ones without. The server makes the same check, so this is the prompt,
+         * not the lock.
+         */
+        requireCosts(next) {
+            const $rows = this.linesWithoutCost();
+            if (!$rows.length || this.costApproved) {
+                next();
+                return;
+            }
+            this.costRows = $rows;
+            this.costNext = next;
+            $(SELECTORS.COST_INTRO).text(fmt(MESSAGES.costIntro, { count: $rows.length }));
+            $(SELECTORS.COST_BODY).html($rows.map(($row) => `<tr>
+                <td class="mmi-po-col-item">${esc($row.find('[data-field="item_number"]').val())}</td>
+                <td>${esc($row.find('[data-field="description"]').val())}</td>
+                <td class="mmi-po-col-qty">${esc($row.find('[data-field="qty"]').val())}</td>
+                <td class="mmi-po-col-money"><input type="number" class="${COST_MISSING_CLASS}" min="0" step="0.01" aria-label="Unit cost"></td>
+            </tr>`).join(''));
+            $(SELECTORS.COST_APPROVE).prop('checked', false);
+            $(SELECTORS.COST_ERROR).prop('hidden', true).empty();
+            window.MMIModal.open($(SELECTORS.COST_MODAL));
+            $(SELECTORS.COST_BODY).find('input').first().trigger('focus');
+        },
+
+        /** The approval box is only on the page for a manager; without it every line needs a cost. */
+        confirmCosts() {
+            const costs = $(SELECTORS.COST_BODY).find('input').get().map((input) => num(input.value));
+            const blank = costs.filter((cost) => cost <= 0).length;
+            const $approve = $(SELECTORS.COST_APPROVE);
+            if (blank && !$approve.is(':checked')) {
+                $(SELECTORS.COST_ERROR).text(fmt($approve.length ? MESSAGES.costStillMissing : MESSAGES.costNeedAll, { count: blank })).prop('hidden', false);
+                return;
+            }
+            costs.forEach((cost, i) => {
+                if (cost > 0) {
+                    this.costRows[i].find('[data-field="unit_cost"]').val(cost.toFixed(2));
+                    this.recalcRow(this.costRows[i]);
+                }
+            });
+            if (blank < costs.length) {
+                this.recalc();
+                this.markDirty();
+            }
+            // Set after markDirty(), which withdraws an approval whenever the PO changes.
+            this.costApproved = blank > 0;
+            const next = this.costNext;
+            this.costRows = [];
+            this.costNext = null;
+            window.MMIModal.close($(SELECTORS.COST_MODAL));
+            next();
+        },
+
+        /** The PDF download link, carrying this session's approval of lines with no unit cost. */
+        downloadUrl() {
+            return `${CFG.downloadUrl}${this.costApproved ? '&nocost=1' : ''}`;
         },
 
         sizeCaption(item) {
@@ -1405,6 +1547,7 @@
 
         markDirty() {
             this.dirty = true;
+            this.costApproved = false;
             $(SELECTORS.DIRTY).prop('hidden', false);
             $(SELECTORS.LABEL_BLOCKER).prop('hidden', true);
         },
@@ -1466,7 +1609,7 @@
             const win = download ? null : window.open('', '_blank');
             this.saveIfDirty()
                 .then(() => {
-                    const url = download ? CFG.downloadUrl : CFG.pdfUrl;
+                    const url = download ? this.downloadUrl() : CFG.pdfUrl;
                     if (win) {
                         win.location.href = url;
                     } else {
@@ -1485,6 +1628,10 @@
                 this.message(MESSAGES.needLines, 'error');
                 return;
             }
+            this.requireCosts(() => this.loadEmailDraft());
+        },
+
+        loadEmailDraft() {
             this.saveIfDirty()
                 .then(() => ajax('email_draft', { id: this.order.id }))
                 .then((draft) => {
@@ -1499,6 +1646,7 @@
                         ? fmt(MESSAGES.attachLabel, { service: draft.label.service_name, tracking: draft.label.tracking_number || '—' })
                         : '');
                     $(SELECTORS.EMAIL_ERROR).prop('hidden', true).empty();
+                    this.resetMailApp(draft.label);
                     window.MMIModal.open($(SELECTORS.EMAIL_MODAL));
                 })
                 .catch((msg) => this.message(msg, 'error'));
@@ -1508,22 +1656,88 @@
             const $btn = $(SELECTORS.EMAIL_SEND);
             const $error = $(SELECTORS.EMAIL_ERROR).prop('hidden', true);
             setBusy($btn, true, LABELS.SEND_IDLE, LABELS.SEND_BUSY);
-            ajax('send', {
+            ajax('send', Object.assign(this.emailParams(), {
+                body: $(SELECTORS.EMAIL_BODY).val(),
+                attach_label: !$(SELECTORS.ATTACH_LABEL_WRAP).prop('hidden') && $(SELECTORS.ATTACH_LABEL).is(':checked') ? 1 : 0,
+            }))
+                .then((data) => this.afterEmailed(data, MESSAGES.sent))
+                .catch((msg) => $error.text(msg).prop('hidden', false))
+                .finally(() => setBusy($btn, false, LABELS.SEND_IDLE, LABELS.SEND_BUSY));
+        },
+
+        /** What Send and "mark as emailed" both post from the dialog. */
+        emailParams() {
+            return {
                 id: this.order.id,
                 to: $(SELECTORS.EMAIL_TO).val(),
                 cc: $(SELECTORS.EMAIL_CC).val(),
                 subject: $(SELECTORS.EMAIL_SUBJECT).val(),
-                body: $(SELECTORS.EMAIL_BODY).val(),
                 remember: !$(SELECTORS.EMAIL_REMEMBER_WRAP).prop('hidden') && $(SELECTORS.EMAIL_REMEMBER).is(':checked') ? 1 : 0,
-                attach_label: !$(SELECTORS.ATTACH_LABEL_WRAP).prop('hidden') && $(SELECTORS.ATTACH_LABEL).is(':checked') ? 1 : 0,
-            })
-                .then((data) => {
-                    window.MMIModal.close($(SELECTORS.EMAIL_MODAL));
-                    this.applyResponse(data);
-                    this.message(fmt(MESSAGES.sent, { number: data.order.po_number, to: data.order.sent_to }));
-                })
+                no_cost_ok: this.costApproved ? 1 : 0,
+            };
+        },
+
+        afterEmailed(data, template) {
+            window.MMIModal.close($(SELECTORS.EMAIL_MODAL));
+            this.applyResponse(data);
+            this.message(fmt(template, { number: data.order.po_number, to: data.order.sent_to }));
+        },
+
+        /* Own mail app */
+
+        /** Each time the Send dialog opens: the app used last time on this computer, nothing marked yet. */
+        resetMailApp(label) {
+            let stored = '';
+            try {
+                stored = window.localStorage.getItem(MAIL_APP_STORAGE_KEY) || '';
+            } catch (e) {
+                stored = ''; // Storage is blocked (private browsing): start from the first app.
+            }
+            if (MAIL_APPS[stored]) {
+                $(SELECTORS.MAILAPP_SELECT).val(stored);
+            }
+            const labelUrl = label && label.label_url ? label.label_url : '';
+            $(SELECTORS.MAILAPP_LABEL).prop('hidden', labelUrl === '');
+            $(SELECTORS.MAILAPP_LABEL_LINK).attr('href', labelUrl || '#');
+            $(SELECTORS.MAILAPP_MARK).prop('hidden', true);
+            $(SELECTORS.MAILAPP).prop('hidden', false);
+            this.renderMailApp();
+        },
+
+        /** Keeps the Open link a real link to the chosen app with the dialog's current text, so no popup blocker applies. */
+        renderMailApp() {
+            const app = $(SELECTORS.MAILAPP_SELECT).val();
+            const addresses = (selector) => $(selector).val().split(/[\s,;]+/).filter(Boolean);
+            $(SELECTORS.MAILAPP_OPEN)
+                .attr('href', MAIL_APPS[app]({
+                    to: addresses(SELECTORS.EMAIL_TO),
+                    cc: addresses(SELECTORS.EMAIL_CC),
+                    subject: $(SELECTORS.EMAIL_SUBJECT).val(),
+                    body: $(SELECTORS.EMAIL_BODY).val(),
+                }))
+                .attr('target', app === 'app' ? null : '_blank');
+        },
+
+        /** Runs beside the link's own navigation. */
+        openMailApp() {
+            try {
+                window.localStorage.setItem(MAIL_APP_STORAGE_KEY, $(SELECTORS.MAILAPP_SELECT).val());
+            } catch (e) {
+                // Storage is blocked: the choice just isn't remembered.
+            }
+            // The link cannot carry the PDF, so it downloads for the user to attach.
+            $(SELECTORS.MAILAPP_FRAME).attr('src', this.downloadUrl());
+            $(SELECTORS.MAILAPP_MARK).prop('hidden', false);
+        },
+
+        markEmailed() {
+            const $btn = $(SELECTORS.MAILAPP_MARK);
+            const $error = $(SELECTORS.EMAIL_ERROR).prop('hidden', true);
+            setBusy($btn, true, LABELS.MARK_IDLE, LABELS.MARK_BUSY);
+            ajax('mark_emailed', Object.assign(this.emailParams(), { app: $(SELECTORS.MAILAPP_SELECT).val() }))
+                .then((data) => this.afterEmailed(data, MESSAGES.markedEmailed))
                 .catch((msg) => $error.text(msg).prop('hidden', false))
-                .finally(() => setBusy($btn, false, LABELS.SEND_IDLE, LABELS.SEND_BUSY));
+                .finally(() => setBusy($btn, false, LABELS.MARK_IDLE, LABELS.MARK_BUSY));
         },
 
         changeStatus() {
